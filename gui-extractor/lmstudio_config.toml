@@ -1,0 +1,35 @@
+# LM Studio Configuration
+[lmstudio]
+# API endpoint for LM Studio
+endpoint = "http://172.20.10.3:8090/v1/chat/completions"
+
+# Request timeout in milliseconds
+timeout = 1200000
+
+# Temperature for generation (0.0 to 1.0)
+temperature = 0.8
+
+# Maximum tokens for generation
+max_tokens = 8000
+
+# Prompts for different tasks
+[prompts]
+# Prompt for keyword generation
+keywords = """Extract a comma delimited list of organism names, reactants or chemicals such as specific proteins or drugs, organism types, statistical test names, environments, chemical reactions, and algorithms. These values will be keywords, include only the shortest complete form of each without a title or suffix to response. If no relevant keywords are found, return an empty string.
+
+Text:
+{text}"""
+
+# Prompt for summary generation
+summary = """Analyze this research paper and provide a concise summary of the key findings.
+
+Please provide:
+1. Main research question
+2. Key findings (3-5 bullet points)
+3. Significance of the work
+4. Potential applications or implications
+
+Be concise and focus on the most important aspects. Do not include a title or preamble in your response.
+
+Text:
+{text}"""

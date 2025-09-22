@@ -1,0 +1,26 @@
+
+=== 2025-09-22T14:24:59 ===
+Paper excerpt: Extent of enthalpy–entropy compensation in protein–ligand interactions
+Tjelvar S. G. Olsson, John E. Ladbury, Will R. Pitt, Mark A. Williams
+First published: 07 July 2011
+https://doi.org/10.1002/pro.6...
+Original keywords: 
+Improved keywords: 
+Original prompt: Extract a comma delimited list of organism names, reactants or chemicals such as specific proteins or drugs, organism types, statistical test names, environments, chemical reactions, and algorithms. These values will be keywords, include only the shortest complete form of each without a title or suffix to response. If no relevant keywords are found, return an empty string.
+
+Text:
+{text}
+Improved prompt: Extract a comma‑delimited list of the shortest complete forms of any organism names, protein/peptide identifiers, specific chemicals (e.g., drugs, metabolites), enzyme or enzyme‑related terms, and any statistical test names, experimental methods, environmental conditions, or algorithms mentioned. Return only these terms without titles or suffixes. If none are found, return an empty string. Text:
+===
+
+
+=== 2025-09-22T15:05:12 ===
+Original keywords: IL‑2, BCL‑2, ABL kinase, PASS, LIGSITE, tCONCOORD
+Improved keywords: 
+Original prompt: Extract a comma delimited list of organism names, reactants or chemicals such as specific proteins or drugs, organism types, statistical test names, environments, chemical reactions, and algorithms. These values will be keywords, include only the shortest complete form of each without a title or suffix to response. If no relevant keywords are found, return an empty string.
+
+Text:
+{text}
+Improved prompt: Extract a comma‑delimited list of relevant scientific entities (proteins, gene symbols, chemicals/drugs), statistical test names, environmental descriptors, and chemical reaction descriptors mentioned in the article. Include only the shortest complete form for each item. If no such items are found, return an empty string. Text:
+===
+

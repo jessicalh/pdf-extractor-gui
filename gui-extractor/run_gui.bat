@@ -1,0 +1,3 @@
+@echo off
+echo Launching PDF Extractor GUI...
+start release\pdfextractor_gui.exe --gui

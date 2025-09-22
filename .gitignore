@@ -1,0 +1,54 @@
+# Build directories
+build/
+debug/
+release/
+minimal/
+minimal_deploy/
+standalone/
+static_test/
+
+# Qt generated files
+*.moc
+moc_*.cpp
+moc_*.h
+*.o
+*.obj
+*.pdb
+Makefile*
+.qmake.stash
+*.pro.user
+*.pro.user.*
+
+# Executables
+*.exe
+*.dll
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Test outputs
+*.txt
+!README.md
+!keyword_prompts_learned.txt
+!lmstudio_config.toml
+!lmstudio_config_improved.toml
+
+# PDF test files (keep for testing)
+!*.pdf
+
+# Logs
+*.log
+nul
+
+# Claude files
+.claude/

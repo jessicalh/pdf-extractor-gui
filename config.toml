@@ -1,0 +1,40 @@
+
+
+[zotero]
+library_type = "user"
+library_id = "250768"
+api_key = "EJ60RtRbopsCJUm0E5RGOw1x"
+batch_size = 100
+
+[lm_studio]
+host = "172.20.10.3"
+port = 8090
+timeout_seconds = 1200
+temperature = 0.8
+max_tokens = 8000
+model_name = "gpt-oss-120b"
+
+# Keyword extraction specific parameters
+keyword_query = """Extract a comma delimited list of organism names, thermodynamic processes, physical processes, types of biological molecules, reactants or chemicals such as specific proteins or drugs, organism types, statistical test names, environments, chemical reactions, and algorithms. These values will be keywords, include only the shortest complete form of each without a title or suffix to response. If no relevant keywords are found, return an empty string."""
+keyword_system_prompt = "You are a scientific keyword extraction assistant. Focus on extracting specific scientific terms, organisms, chemicals, methods, and concepts from research papers."
+keyword_temperature = 0.8  # Changed from 0.3 to match working unit test
+keyword_max_tokens = 8000  # Changed from 500 to match working unit test
+keyword_model_name = "gpt-oss-120b"
+
+# Summary extraction specific parameters
+summary_query = """Analyze this research paper and provide a concise summary of the key findings.
+
+Please provide:
+1. Main research question
+2. Key findings (3-5 bullet points)
+3. Significance of the work
+4. Potential applications or implications
+
+Be concise and focus on the most important aspects. Do not include a title or preamble in your response."""
+summary_system_prompt = "You are an expert scientific reviewer. Provide clear, concise analysis of research papers focusing on key findings and significance."
+summary_temperature = 0.8  # Keep same as integration test
+summary_max_tokens = 8000  # Keep same as integration test
+summary_model_name = "gpt-oss-120b"
+
+
+

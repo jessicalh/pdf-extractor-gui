@@ -1,0 +1,24 @@
+# LM Studio Configuration
+[lmstudio]
+# API endpoint for LM Studio
+endpoint = "http://172.20.10.3:8090/v1/chat/completions"
+
+# Request timeout in milliseconds
+timeout = 1200000
+
+# Temperature for generation (0.0 to 1.0)
+temperature = 0.8
+
+# Maximum tokens for generation
+max_tokens = 8000
+
+# Model name to use
+model_name = "gpt-oss-120b"
+
+# Prompts for different tasks
+[prompts]
+# Prompt for keyword generation
+keywords = "Extract a comma delimited list of key scientific terms from this text. Include: organism names, proteins, ligands, drugs, chemicals, enzymes, statistical methods, algorithms, mathematical models, thermodynamic parameters (e.g., enthalpy, entropy, Gibbs free energy), biophysical techniques (e.g., ITC, SPR, NMR), computational methods, databases used, and key scientific concepts or phenomena discussed. These values will be keywords - include only the shortest complete form of each term without articles or descriptive phrases. If no relevant keywords are found, return an empty string.\n\nText:\n{text}"
+
+# Prompt for summary generation
+summary = "Analyze this research paper and provide a concise summary of the key findings.\n\nPlease provide:\n1. Main research question\n2. Key findings (3-5 bullet points)\n3. Significance of the work\n4. Potential applications or implications\n\nBe concise and focus on the most important aspects. Do not include a title or preamble in your response.\n\nText:\n{text}"
