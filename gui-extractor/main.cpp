@@ -13,11 +13,10 @@
 #include <QTabWidget>
 #include <QGroupBox>
 #include <QCheckBox>
+#include <QFrame>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QMessageBox>
-#include <QCommandLineParser>
-#include <QCommandLineOption>
 #include <QPdfDocument>
 #include <QFile>
 #include <QTextStream>
@@ -40,14 +39,20 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QScreen>
-#include <iostream>
-#include <sstream>
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
-#include "tomlparser.h"
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QSqlError>
+#include <QSqlRecord>
+#include <QDir>
 
-// Settings Dialog with both fields and full TOML editor
+// Default prompts for keyword refinement (new fields)
+const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research";
+
+const QString DEFAULT_KEYWORD_REFINEMENT_PREPROMPT = "You are an expert scientific information specialist and editorial assistant specializing in keyword optimization for academic research. Your role is to refine and improve keyword lists to ensure they accurately represent research content while maintaining consistency and precision. You help researchers create coherent keyword sets that improve discoverability and accurately categorize their work.\n\nConstraints:\n- Maintain all original specific terms that are accurate\n- Standardize terminology to accepted scientific conventions\n- Ensure keywords are neither too broad nor too narrow\n- Preserve domain-specific technical terms";
+
+const QString DEFAULT_PREPROMPT_REFINEMENT_PROMPT = "Based on the current paper's content and the existing keyword extraction prompt, create an improved prompt that:\n1. Incorporates relevant domain-specific terms from this paper\n2. Maintains ALL the original categorical requirements (organism names, chemicals, proteins, drugs, statistical tests, environments, reactions, algorithms)\n3. Retains the exact sentence structure of the original prompt\n4. Enhances specificity by adding relevant examples from the current text\n5. Preserves the comma-delimited output format\n6. Do not worry about sentence length - include all necessary categories\n\nProvide only the improved prompt text without explanation. If unable to evaluate or improve, return 'Not Evaluated'.\n\nOriginal Prompt:\n{original_prompt}\n\nCurrent Paper Keywords:\n{keywords}\n\nText:\n{text}\n\nImproved Prompt:";
+
+// Settings Dialog with SQLite-backed fields
 class SettingsDialog : public QDialog
 {
     Q_OBJECT
@@ -55,847 +60,1027 @@ public:
     SettingsDialog(QWidget *parent = nullptr) : QDialog(parent) {
         setWindowTitle("Settings - Configuration");
         setModal(true);
-        resize(900, 700);
+        resize(1000, 700);
 
         auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(10, 10, 10, 10);
 
-        // Create tab widget for fields vs raw editor
+        // Create main tab widget
         auto *tabWidget = new QTabWidget();
 
-        // === FIELDS TAB ===
-        auto *fieldsWidget = new QWidget();
-        auto *fieldsLayout = new QVBoxLayout(fieldsWidget);
-        fieldsLayout->setSpacing(10);
+        // === CONNECTION TAB ===
+        auto *connectionTab = createConnectionTab();
+        tabWidget->addTab(connectionTab, "🌐 Connection");
 
-        // Scroll area for fields
-        auto *scrollArea = new QScrollArea();
-        auto *scrollContent = new QWidget();
-        auto *formLayout = new QFormLayout(scrollContent);
-        formLayout->setSpacing(10);
+        // === SUMMARY TAB ===
+        auto *summaryTab = createSummaryTab();
+        tabWidget->addTab(summaryTab, "📝 Summary");
 
-        // LM Studio Connection Settings
-        auto *connectionGroup = new QLabel("<b>LM Studio Connection</b>");
-        formLayout->addRow(connectionGroup);
+        // === KEYWORDS TAB ===
+        auto *keywordsTab = createKeywordsTab();
+        tabWidget->addTab(keywordsTab, "🔑 Keywords");
 
-        m_endpointEdit = new QLineEdit();
-        m_endpointEdit->setStyleSheet("QLineEdit { background-color: #FFFFFF; color: #000000; }");
-        formLayout->addRow("API Endpoint:", m_endpointEdit);
-
-        m_timeoutEdit = new QSpinBox();
-        m_timeoutEdit->setRange(10000, 3600000);
-        m_timeoutEdit->setSingleStep(10000);
-        m_timeoutEdit->setSuffix(" ms");
-        m_timeoutEdit->setStyleSheet("QSpinBox { background-color: #FFFFFF; color: #000000; }");
-        formLayout->addRow("Timeout:", m_timeoutEdit);
-
-        // Model Settings
-        formLayout->addRow(new QLabel("<b>Model Settings</b>"));
-
-        m_modelEdit = new QLineEdit();
-        m_modelEdit->setStyleSheet("QLineEdit { background-color: #FFFFFF; color: #000000; }");
-        formLayout->addRow("Model Name:", m_modelEdit);
-
-        m_temperatureEdit = new QDoubleSpinBox();
-        m_temperatureEdit->setRange(0.0, 2.0);
-        m_temperatureEdit->setSingleStep(0.1);
-        m_temperatureEdit->setDecimals(1);
-        m_temperatureEdit->setStyleSheet("QDoubleSpinBox { background-color: #FFFFFF; color: #000000; }");
-        formLayout->addRow("Temperature:", m_temperatureEdit);
-
-        m_maxTokensEdit = new QSpinBox();
-        m_maxTokensEdit->setRange(100, 32000);
-        m_maxTokensEdit->setSingleStep(100);
-        m_maxTokensEdit->setStyleSheet("QSpinBox { background-color: #FFFFFF; color: #000000; }");
-        formLayout->addRow("Max Tokens:", m_maxTokensEdit);
-
-        // Prompts
-        formLayout->addRow(new QLabel("<b>Prompts</b>"));
-
-        m_keywordPromptEdit = new QPlainTextEdit();
-        m_keywordPromptEdit->setMaximumHeight(100);
-        m_keywordPromptEdit->setStyleSheet("QPlainTextEdit { background-color: #FFFFFF; color: #000000; }");
-        m_keywordPromptEdit->setPlaceholderText("Enter keyword extraction prompt (will be sanitized)...");
-        formLayout->addRow("Keywords Prompt:", m_keywordPromptEdit);
-
-        m_summaryPromptEdit = new QPlainTextEdit();
-        m_summaryPromptEdit->setMaximumHeight(100);
-        m_summaryPromptEdit->setStyleSheet("QPlainTextEdit { background-color: #FFFFFF; color: #000000; }");
-        m_summaryPromptEdit->setPlaceholderText("Enter summary generation prompt (will be sanitized)...");
-        formLayout->addRow("Summary Prompt:", m_summaryPromptEdit);
-
-        scrollArea->setWidget(scrollContent);
-        scrollArea->setWidgetResizable(true);
-        fieldsLayout->addWidget(scrollArea);
-
-        // === RAW TOML TAB ===
-        auto *tomlWidget = new QWidget();
-        auto *tomlLayout = new QVBoxLayout(tomlWidget);
-
-        auto *infoLabel = new QLabel("Direct TOML editing - be careful with syntax!");
-        tomlLayout->addWidget(infoLabel);
-
-        m_tomlEdit = new QPlainTextEdit();
-        m_tomlEdit->setStyleSheet("QPlainTextEdit { background-color: #FFFFFF; color: #000000; }");
-        QFont monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        monoFont.setPointSize(10);
-        m_tomlEdit->setFont(monoFont);
-        m_tomlEdit->setTabStopDistance(40);
-        tomlLayout->addWidget(m_tomlEdit);
-
-        // Add tabs
-        tabWidget->addTab(fieldsWidget, "Configuration Fields");
-        tabWidget->addTab(tomlWidget, "Raw TOML Editor");
+        // === PROMPT REFINEMENT TAB ===
+        auto *refinementTab = createRefinementTab();
+        tabWidget->addTab(refinementTab, "✨ Prompt Refinement");
 
         layout->addWidget(tabWidget);
 
-        // Load current configuration
-        loadCurrentConfig();
+        // Dialog buttons with proper alignment
+        auto *buttonLayout = new QHBoxLayout();
+        buttonLayout->setContentsMargins(0, 10, 0, 0);
 
-        // Buttons
+        // Restore Defaults on the left
+        auto *restoreButton = new QPushButton("Restore Defaults");
+        connect(restoreButton, &QPushButton::clicked, this, &SettingsDialog::restoreDefaults);
+        buttonLayout->addWidget(restoreButton);
+
+        buttonLayout->addStretch();
+
+        // OK and Cancel on the right
         auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-        connect(buttonBox, &QDialogButtonBox::accepted, this, &SettingsDialog::saveConfig);
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &SettingsDialog::saveSettings);
         connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-        layout->addWidget(buttonBox);
-    }
+        buttonLayout->addWidget(buttonBox);
 
-private slots:
-    void saveConfig() {
-        // Update TOML from fields
-        updateTomlFromFields();
+        layout->addLayout(buttonLayout);
 
-        QString content = m_tomlEdit->toPlainText();
-
-        // Save to file
-        QFile file("lmstudio_config.toml");
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream stream(&file);
-            stream << content;
-            file.close();
-
-            // Verify it can be parsed
-            SimpleTomlParser parser;
-            auto testConfig = parser.parse("lmstudio_config.toml");
-            if (testConfig.isEmpty()) {
-                QMessageBox::warning(this, "Warning", "The TOML file may contain errors. Please check the format.");
-            }
-
-            accept();
-        } else {
-            QMessageBox::critical(this, "Error", "Failed to save configuration file.");
-        }
+        loadSettings();
     }
 
 private:
-    void loadCurrentConfig() {
-        // Load and parse TOML
-        QFile file("lmstudio_config.toml");
-        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QTextStream stream(&file);
-            QString tomlContent = stream.readAll();
-            m_tomlEdit->setPlainText(tomlContent);
-            file.close();
+    QWidget* createConnectionTab() {
+        auto *widget = new QWidget();
+        auto *layout = new QVBoxLayout(widget);
 
-            // Parse for field values
-            SimpleTomlParser parser;
-            auto config = parser.parse("lmstudio_config.toml");
+        auto *formLayout = new QFormLayout();
+        formLayout->setSpacing(15);
 
-            // Populate fields
-            m_endpointEdit->setText(config.value("lmstudio.endpoint", "http://localhost:1234/v1/chat/completions"));
-            m_timeoutEdit->setValue(config.value("lmstudio.timeout", "120000").toInt());
-            m_modelEdit->setText(config.value("lmstudio.model_name", "gpt-oss-120b"));
-            m_temperatureEdit->setValue(config.value("lmstudio.temperature", "0.8").toDouble());
-            m_maxTokensEdit->setValue(config.value("lmstudio.max_tokens", "8000").toInt());
+        auto *headerLabel = new QLabel("<h3>LM Studio Connection Settings</h3>");
+        formLayout->addRow(headerLabel);
 
-            // Clean up prompts for display (remove escaped newlines)
-            QString keywordPrompt = config.value("prompts.keywords", "");
-            keywordPrompt.replace("\\n", "\n");
-            m_keywordPromptEdit->setPlainText(keywordPrompt);
+        m_urlEdit = new QLineEdit();
+        m_urlEdit->setPlaceholderText("http://172.20.10.3:8090/v1/chat/completions");
+        formLayout->addRow("API URL:", m_urlEdit);
 
-            QString summaryPrompt = config.value("prompts.summary", "");
-            summaryPrompt.replace("\\n", "\n");
-            m_summaryPromptEdit->setPlainText(summaryPrompt);
+        m_modelNameEdit = new QLineEdit();
+        m_modelNameEdit->setPlaceholderText("gpt-oss-120b");
+        formLayout->addRow("Model Name:", m_modelNameEdit);
+
+        m_overallTimeoutEdit = new QSpinBox();
+        m_overallTimeoutEdit->setRange(10000, 600000);
+        m_overallTimeoutEdit->setSingleStep(10000);
+        m_overallTimeoutEdit->setSuffix(" ms");
+        m_overallTimeoutEdit->setValue(120000);
+        formLayout->addRow("Overall Timeout:", m_overallTimeoutEdit);
+
+        layout->addLayout(formLayout);
+        layout->addStretch();
+
+        return widget;
+    }
+
+    QWidget* createSummaryTab() {
+        auto *widget = new QWidget();
+        auto *layout = new QVBoxLayout(widget);
+
+        // Settings row at top
+        auto *settingsLayout = new QHBoxLayout();
+        settingsLayout->addWidget(new QLabel("Temperature:"));
+        m_summaryTempEdit = new QDoubleSpinBox();
+        m_summaryTempEdit->setRange(0.0, 2.0);
+        m_summaryTempEdit->setSingleStep(0.1);
+        m_summaryTempEdit->setDecimals(2);
+        m_summaryTempEdit->setValue(0.8);
+        settingsLayout->addWidget(m_summaryTempEdit);
+
+        settingsLayout->addWidget(new QLabel("Context:"));
+        m_summaryContextEdit = new QSpinBox();
+        m_summaryContextEdit->setRange(1000, 100000);
+        m_summaryContextEdit->setSingleStep(1000);
+        m_summaryContextEdit->setSuffix(" tokens");
+        m_summaryContextEdit->setValue(8000);
+        settingsLayout->addWidget(m_summaryContextEdit);
+
+        settingsLayout->addWidget(new QLabel("Timeout:"));
+        m_summaryTimeoutEdit = new QSpinBox();
+        m_summaryTimeoutEdit->setRange(10000, 600000);
+        m_summaryTimeoutEdit->setSingleStep(10000);
+        m_summaryTimeoutEdit->setSuffix(" ms");
+        m_summaryTimeoutEdit->setValue(120000);
+        settingsLayout->addWidget(m_summaryTimeoutEdit);
+
+        settingsLayout->addStretch();
+        layout->addLayout(settingsLayout);
+
+        // Two equal-sized text areas
+        auto *promptSplitter = new QSplitter(Qt::Vertical);
+
+        auto *setupGroup = new QGroupBox("Prompt Setup");
+        auto *setupLayout = new QVBoxLayout(setupGroup);
+        m_summaryPrepromptEdit = new QTextEdit();
+        m_summaryPrepromptEdit->setPlaceholderText("Pre-prompt to set context and instructions");
+        setupLayout->addWidget(m_summaryPrepromptEdit);
+        promptSplitter->addWidget(setupGroup);
+
+        auto *promptGroup = new QGroupBox("Prompt");
+        auto *promptLayout = new QVBoxLayout(promptGroup);
+        m_summaryPromptEdit = new QTextEdit();
+        m_summaryPromptEdit->setPlaceholderText("Main prompt template\nUse {text} as placeholder for the input text");
+        promptLayout->addWidget(m_summaryPromptEdit);
+        promptSplitter->addWidget(promptGroup);
+
+        promptSplitter->setSizes({200, 200}); // Equal sizes
+        layout->addWidget(promptSplitter);
+
+        return widget;
+    }
+
+    QWidget* createKeywordsTab() {
+        auto *widget = new QWidget();
+        auto *layout = new QVBoxLayout(widget);
+
+        // Settings row at top
+        auto *settingsLayout = new QHBoxLayout();
+        settingsLayout->addWidget(new QLabel("Temperature:"));
+        m_keywordTempEdit = new QDoubleSpinBox();
+        m_keywordTempEdit->setRange(0.0, 2.0);
+        m_keywordTempEdit->setSingleStep(0.1);
+        m_keywordTempEdit->setDecimals(2);
+        m_keywordTempEdit->setValue(0.5);
+        settingsLayout->addWidget(m_keywordTempEdit);
+
+        settingsLayout->addWidget(new QLabel("Context:"));
+        m_keywordContextEdit = new QSpinBox();
+        m_keywordContextEdit->setRange(1000, 100000);
+        m_keywordContextEdit->setSingleStep(1000);
+        m_keywordContextEdit->setSuffix(" tokens");
+        m_keywordContextEdit->setValue(4000);
+        settingsLayout->addWidget(m_keywordContextEdit);
+
+        settingsLayout->addWidget(new QLabel("Timeout:"));
+        m_keywordTimeoutEdit = new QSpinBox();
+        m_keywordTimeoutEdit->setRange(10000, 600000);
+        m_keywordTimeoutEdit->setSingleStep(10000);
+        m_keywordTimeoutEdit->setSuffix(" ms");
+        m_keywordTimeoutEdit->setValue(60000);
+        settingsLayout->addWidget(m_keywordTimeoutEdit);
+
+        settingsLayout->addStretch();
+        layout->addLayout(settingsLayout);
+
+        // Two equal-sized text areas
+        auto *promptSplitter = new QSplitter(Qt::Vertical);
+
+        auto *setupGroup = new QGroupBox("Prompt Setup");
+        auto *setupLayout = new QVBoxLayout(setupGroup);
+        m_keywordPrepromptEdit = new QTextEdit();
+        m_keywordPrepromptEdit->setPlaceholderText("Pre-prompt to set context and instructions");
+        setupLayout->addWidget(m_keywordPrepromptEdit);
+        promptSplitter->addWidget(setupGroup);
+
+        auto *promptGroup = new QGroupBox("Prompt");
+        auto *promptLayout = new QVBoxLayout(promptGroup);
+        m_keywordPromptEdit = new QTextEdit();
+        m_keywordPromptEdit->setPlaceholderText("Main prompt template\nUse {text} as placeholder for the input text");
+        promptLayout->addWidget(m_keywordPromptEdit);
+        promptSplitter->addWidget(promptGroup);
+
+        promptSplitter->setSizes({200, 200}); // Equal sizes
+        layout->addWidget(promptSplitter);
+
+        return widget;
+    }
+
+    QWidget* createRefinementTab() {
+        auto *widget = new QWidget();
+        auto *layout = new QVBoxLayout(widget);
+
+        // Settings row at top
+        auto *settingsLayout = new QHBoxLayout();
+        settingsLayout->addWidget(new QLabel("Temperature:"));
+        m_refinementTempEdit = new QDoubleSpinBox();
+        m_refinementTempEdit->setRange(0.0, 2.0);
+        m_refinementTempEdit->setSingleStep(0.1);
+        m_refinementTempEdit->setDecimals(2);
+        m_refinementTempEdit->setValue(0.8);
+        settingsLayout->addWidget(m_refinementTempEdit);
+
+        settingsLayout->addWidget(new QLabel("Context:"));
+        m_refinementContextEdit = new QSpinBox();
+        m_refinementContextEdit->setRange(1000, 100000);
+        m_refinementContextEdit->setSingleStep(1000);
+        m_refinementContextEdit->setSuffix(" tokens");
+        m_refinementContextEdit->setValue(8000);
+        settingsLayout->addWidget(m_refinementContextEdit);
+
+        settingsLayout->addWidget(new QLabel("Timeout:"));
+        m_refinementTimeoutEdit = new QSpinBox();
+        m_refinementTimeoutEdit->setRange(1000, 600000);
+        m_refinementTimeoutEdit->setSingleStep(1000);
+        m_refinementTimeoutEdit->setSuffix(" ms");
+        m_refinementTimeoutEdit->setValue(60000);
+        settingsLayout->addWidget(m_refinementTimeoutEdit);
+        settingsLayout->addStretch();
+        layout->addLayout(settingsLayout);
+
+        // Two equal-sized text areas
+        auto *promptSplitter = new QSplitter(Qt::Vertical);
+
+        auto *setupGroup = new QGroupBox("Prompt Setup");
+        auto *setupLayout = new QVBoxLayout(setupGroup);
+        m_keywordRefinementPrepromptEdit = new QTextEdit();
+        m_keywordRefinementPrepromptEdit->setPlaceholderText("Pre-prompt for keyword refinement");
+        setupLayout->addWidget(m_keywordRefinementPrepromptEdit);
+        promptSplitter->addWidget(setupGroup);
+
+        auto *promptGroup = new QGroupBox("Prompt");
+        auto *promptLayout = new QVBoxLayout(promptGroup);
+        m_prepromptRefinementPromptEdit = new QTextEdit();
+        m_prepromptRefinementPromptEdit->setPlaceholderText("Prompt template for refinement");
+        promptLayout->addWidget(m_prepromptRefinementPromptEdit);
+        promptSplitter->addWidget(promptGroup);
+
+        promptSplitter->setSizes({200, 200}); // Equal sizes
+        layout->addWidget(promptSplitter);
+
+        return widget;
+    }
+
+public:
+
+    void loadSettings() {
+        QSqlDatabase db = QSqlDatabase::database();
+        QSqlQuery query(db);
+
+        if (query.exec("SELECT * FROM settings LIMIT 1") && query.next()) {
+            // Connection settings
+            m_urlEdit->setText(query.value("url").toString());
+            m_modelNameEdit->setText(query.value("model_name").toString());
+            m_overallTimeoutEdit->setValue(query.value("overall_timeout").toString().toInt());
+
+            // Summary settings
+            m_summaryTempEdit->setValue(query.value("summary_temperature").toString().toDouble());
+            m_summaryContextEdit->setValue(query.value("summary_context_length").toString().toInt());
+            m_summaryTimeoutEdit->setValue(query.value("summary_timeout").toString().toInt());
+            m_summaryPrepromptEdit->setPlainText(query.value("summary_preprompt").toString());
+            m_summaryPromptEdit->setPlainText(query.value("summary_prompt").toString());
+
+            // Keyword settings
+            m_keywordTempEdit->setValue(query.value("keyword_temperature").toString().toDouble());
+            m_keywordContextEdit->setValue(query.value("keyword_context_length").toString().toInt());
+            m_keywordTimeoutEdit->setValue(query.value("keyword_timeout").toString().toInt());
+            m_keywordPrepromptEdit->setPlainText(query.value("keyword_preprompt").toString());
+            m_keywordPromptEdit->setPlainText(query.value("keyword_prompt").toString());
+
+            // Refinement settings
+            m_refinementTempEdit->setValue(query.value("refinement_temperature").toString().toDouble());
+            m_refinementContextEdit->setValue(query.value("refinement_context_length").toString().toInt());
+            m_refinementTimeoutEdit->setValue(query.value("refinement_timeout").toString().toInt());
+            m_keywordRefinementPrepromptEdit->setPlainText(query.value("keyword_refinement_preprompt").toString());
+            m_prepromptRefinementPromptEdit->setPlainText(query.value("preprompt_refinement_prompt").toString());
         }
     }
 
-    QString sanitizePrompt(const QString &prompt) {
-        QString result = prompt;
+    void saveSettings() {
+        QSqlDatabase db = QSqlDatabase::database();
+        QSqlQuery query(db);
 
-        // Remove control characters but keep newlines for now
-        result.remove(QChar::Null);
-        result.remove(QChar(0xFFFD));
+        query.prepare("UPDATE settings SET "
+                     "url = :url, "
+                     "model_name = :model_name, "
+                     "overall_timeout = :overall_timeout, "
+                     "summary_temperature = :summary_temperature, "
+                     "summary_context_length = :summary_context_length, "
+                     "summary_timeout = :summary_timeout, "
+                     "summary_preprompt = :summary_preprompt, "
+                     "summary_prompt = :summary_prompt, "
+                     "keyword_temperature = :keyword_temperature, "
+                     "keyword_context_length = :keyword_context_length, "
+                     "keyword_timeout = :keyword_timeout, "
+                     "keyword_preprompt = :keyword_preprompt, "
+                     "keyword_prompt = :keyword_prompt, "
+                     "refinement_temperature = :refinement_temperature, "
+                     "refinement_context_length = :refinement_context_length, "
+                     "refinement_timeout = :refinement_timeout, "
+                     "keyword_refinement_preprompt = :keyword_refinement_preprompt, "
+                     "preprompt_refinement_prompt = :preprompt_refinement_prompt");
 
-        // Normalize whitespace
-        result.replace(QRegularExpression("\\r\\n|\\r"), "\n");
-        result.replace(QRegularExpression("[ \\t]+"), " ");
+        // Connection settings
+        query.bindValue(":url", m_urlEdit->text());
+        query.bindValue(":model_name", m_modelNameEdit->text());
+        query.bindValue(":overall_timeout", QString::number(m_overallTimeoutEdit->value()));
 
-        // Escape newlines for TOML
-        result.replace("\n", "\\n");
+        // Summary settings
+        query.bindValue(":summary_temperature", QString::number(m_summaryTempEdit->value()));
+        query.bindValue(":summary_context_length", QString::number(m_summaryContextEdit->value()));
+        query.bindValue(":summary_timeout", QString::number(m_summaryTimeoutEdit->value()));
+        query.bindValue(":summary_preprompt", m_summaryPrepromptEdit->toPlainText());
+        query.bindValue(":summary_prompt", m_summaryPromptEdit->toPlainText());
 
-        // Remove any quotes that might break TOML
-        result.replace("\"\"\"", "''");
+        // Keyword settings
+        query.bindValue(":keyword_temperature", QString::number(m_keywordTempEdit->value()));
+        query.bindValue(":keyword_context_length", QString::number(m_keywordContextEdit->value()));
+        query.bindValue(":keyword_timeout", QString::number(m_keywordTimeoutEdit->value()));
+        query.bindValue(":keyword_preprompt", m_keywordPrepromptEdit->toPlainText());
+        query.bindValue(":keyword_prompt", m_keywordPromptEdit->toPlainText());
 
-        // Trim
-        result = result.trimmed();
+        // Refinement settings
+        query.bindValue(":refinement_temperature", QString::number(m_refinementTempEdit->value()));
+        query.bindValue(":refinement_context_length", QString::number(m_refinementContextEdit->value()));
+        query.bindValue(":refinement_timeout", QString::number(m_refinementTimeoutEdit->value()));
+        query.bindValue(":keyword_refinement_preprompt", m_keywordRefinementPrepromptEdit->toPlainText());
+        query.bindValue(":preprompt_refinement_prompt", m_prepromptRefinementPromptEdit->toPlainText());
 
-        return result;
+        if (!query.exec()) {
+            QMessageBox::critical(this, "Error", "Failed to save settings: " + query.lastError().text());
+        } else {
+            accept();
+        }
     }
 
-    void updateTomlFromFields() {
-        QString tomlContent = m_tomlEdit->toPlainText();
+    void restoreDefaults() {
+        // Connection defaults
+        m_urlEdit->setText("http://172.20.10.3:8090/v1/chat/completions");
+        m_modelNameEdit->setText("gpt-oss-120b");
+        m_overallTimeoutEdit->setValue(120000);
 
-        // Update values in TOML - this is simplified, a full implementation would parse and rebuild
-        // For now, we'll use regex replacements
+        // Summary defaults (optimized for gpt-oss-120b)
+        m_summaryTempEdit->setValue(0.7);  // Lower temperature for more deterministic summaries
+        m_summaryContextEdit->setValue(16000);  // Increased context for better comprehension
+        m_summaryTimeoutEdit->setValue(120000);
+        m_summaryPrepromptEdit->setPlainText("You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'");
+        m_summaryPromptEdit->setPlainText("Please provide a summary:\n"
+                                         "1. Main research question or hypothesis\n"
+                                         "2. Key findings (3-5 bullet points with specific results)\n"
+                                         "3. Methodology and approach used\n"
+                                         "4. Significance and contribution to the field\n"
+                                         "5. Potential applications, implications, or future directions\n\n"
+                                         "Be concise yet comprehensive. Focus on information valuable for literature review inclusion. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
+                                         "Text:\n{text}");
 
-        // Update endpoint
-        tomlContent.replace(QRegularExpression("endpoint\\s*=\\s*\"[^\"]*\""),
-                          QString("endpoint = \"%1\"").arg(m_endpointEdit->text()));
+        // Keyword defaults (optimized for gpt-oss-120b)
+        m_keywordTempEdit->setValue(0.3);  // Very low temperature for precise extraction
+        m_keywordContextEdit->setValue(8000);  // Increased for better context understanding
+        m_keywordTimeoutEdit->setValue(60000);
+        m_keywordPrepromptEdit->setPlainText(DEFAULT_KEYWORD_PREPROMPT);
+        m_keywordPromptEdit->setPlainText("Extract and return a comma-delimited list containing: "
+                                         "organism names (species, genus), "
+                                         "chemicals (including specific proteins, enzymes, drugs, compounds), "
+                                         "statistical methods (test names, analysis techniques), "
+                                         "environmental factors (conditions, locations, habitats), "
+                                         "chemical reactions (reaction types, mechanisms), "
+                                         "computational methods (algorithms, models, software tools), "
+                                         "and research techniques (experimental methods, instruments).\n\n"
+                                         "Format: Return only the shortest complete scientific form of each term, separated by commas. Do not include explanations, titles, or suffixes. If unable to extract relevant keywords from the text, return 'Not Evaluated'.\n\n"
+                                         "Text:\n{text}");
 
-        // Update timeout
-        tomlContent.replace(QRegularExpression("timeout\\s*=\\s*\\d+"),
-                          QString("timeout = %1").arg(m_timeoutEdit->value()));
-
-        // Update model
-        tomlContent.replace(QRegularExpression("model_name\\s*=\\s*\"[^\"]*\""),
-                          QString("model_name = \"%1\"").arg(m_modelEdit->text()));
-
-        // Update temperature
-        tomlContent.replace(QRegularExpression("temperature\\s*=\\s*[\\d.]+"),
-                          QString("temperature = %1").arg(m_temperatureEdit->value()));
-
-        // Update max_tokens
-        tomlContent.replace(QRegularExpression("max_tokens\\s*=\\s*\\d+"),
-                          QString("max_tokens = %1").arg(m_maxTokensEdit->value()));
-
-        // Update prompts (more complex due to multiline)
-        QString sanitizedKeywords = sanitizePrompt(m_keywordPromptEdit->toPlainText());
-        QString sanitizedSummary = sanitizePrompt(m_summaryPromptEdit->toPlainText());
-
-        // Find and replace keywords prompt
-        int keywordsStart = tomlContent.indexOf("keywords = \"");
-        if (keywordsStart != -1) {
-            int keywordsEnd = tomlContent.indexOf("\"", keywordsStart + 12);
-            if (keywordsEnd != -1) {
-                tomlContent.replace(keywordsStart, keywordsEnd - keywordsStart + 1,
-                                  QString("keywords = \"%1\"").arg(sanitizedKeywords));
-            }
-        }
-
-        // Find and replace summary prompt
-        int summaryStart = tomlContent.indexOf("summary = \"");
-        if (summaryStart != -1) {
-            int summaryEnd = tomlContent.indexOf("\"", summaryStart + 11);
-            if (summaryEnd != -1) {
-                tomlContent.replace(summaryStart, summaryEnd - summaryStart + 1,
-                                  QString("summary = \"%1\"").arg(sanitizedSummary));
-            }
-        }
-
-        m_tomlEdit->setPlainText(tomlContent);
+        // Refinement defaults (optimized for gpt-oss-120b)
+        m_refinementTempEdit->setValue(0.8);  // Default temperature for refinement
+        m_refinementContextEdit->setValue(8000);
+        m_refinementTimeoutEdit->setValue(60000);
+        m_keywordRefinementPrepromptEdit->setPlainText(DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
+        m_prepromptRefinementPromptEdit->setPlainText(DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
     }
 
-    // Field widgets
-    QLineEdit *m_endpointEdit;
-    QSpinBox *m_timeoutEdit;
-    QLineEdit *m_modelEdit;
-    QDoubleSpinBox *m_temperatureEdit;
-    QSpinBox *m_maxTokensEdit;
-    QPlainTextEdit *m_keywordPromptEdit;
-    QPlainTextEdit *m_summaryPromptEdit;
+private:
+    // Connection tab widgets
+    QLineEdit *m_urlEdit;
+    QLineEdit *m_modelNameEdit;
+    QSpinBox *m_overallTimeoutEdit;
 
-    // Raw editor
-    QPlainTextEdit *m_tomlEdit;
+    // Summary tab widgets
+    QDoubleSpinBox *m_summaryTempEdit;
+    QSpinBox *m_summaryContextEdit;
+    QSpinBox *m_summaryTimeoutEdit;
+    QTextEdit *m_summaryPrepromptEdit;
+    QTextEdit *m_summaryPromptEdit;
+
+    // Keywords tab widgets
+    QDoubleSpinBox *m_keywordTempEdit;
+    QSpinBox *m_keywordContextEdit;
+    QSpinBox *m_keywordTimeoutEdit;
+    QTextEdit *m_keywordPrepromptEdit;
+    QTextEdit *m_keywordPromptEdit;
+
+    // Refinement tab widgets
+    QDoubleSpinBox *m_refinementTempEdit;
+    QSpinBox *m_refinementContextEdit;
+    QSpinBox *m_refinementTimeoutEdit;
+    QTextEdit *m_keywordRefinementPrepromptEdit;
+    QTextEdit *m_prepromptRefinementPromptEdit;
 };
 
-// Main window class
+// Main PDF Extractor GUI Window
 class PDFExtractorGUI : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    PDFExtractorGUI(QWidget *parent = nullptr) : QMainWindow(parent) {
-        std::cout << "Initializing PDFExtractorGUI..." << std::endl;
+    PDFExtractorGUI(QWidget *parent = nullptr)
+        : QMainWindow(parent) {
 
-        setWindowTitle("PDF Extractor with AI Analysis");
+        // Initialize database first
+        initDatabase();
 
-        // Force window size and position
+        setWindowTitle("PDF Extractor GUI v3.0 - AI Analysis");
         resize(1200, 800);
 
-        // Center the window on screen
-        QRect screenGeometry = QApplication::primaryScreen()->geometry();
-        int x = (screenGeometry.width() - 1200) / 2;
-        int y = (screenGeometry.height() - 800) / 2;
-        move(x, y);
+        // Center window on screen
+        if (auto *screen = QGuiApplication::primaryScreen()) {
+            QRect screenGeometry = screen->availableGeometry();
+            int x = (screenGeometry.width() - width()) / 2;
+            int y = (screenGeometry.height() - height()) / 2;
+            move(x, y);
+        }
 
-        // Force window flags for visibility
-        setWindowFlags(Qt::Window);
-        setAttribute(Qt::WA_ShowModal, false);
+        setupUI();
 
         m_pdfDocument = std::make_unique<QPdfDocument>();
         m_networkManager = new QNetworkAccessManager(this);
 
-        loadConfiguration();
-        setupUi();
-
-        // Initialize conversation log
-        m_conversationLog.clear();
-
-        m_commandLineMode = false;
-
-        std::cout << "PDFExtractorGUI initialized successfully" << std::endl;
-        std::cout << "Window geometry: " << geometry().x() << "," << geometry().y()
-                  << " " << geometry().width() << "x" << geometry().height() << std::endl;
+        connectSignals();
     }
 
-    void processCommandLine(const QCommandLineParser &parser) {
-        // Command line processing remains the same
-        m_commandLineMode = true;
-        const QStringList args = parser.positionalArguments();
-        if (args.size() < 2) {
-            QMessageBox::critical(this, tr("Error"), tr("Insufficient arguments"));
-            QTimer::singleShot(100, qApp, &QApplication::quit);
-            return;
-        }
-
-        QString pdfPath = args[0];
-        QString outputPath = args[1];
-
-        // Process the PDF
-        if (!processPDF(pdfPath, outputPath, parser)) {
-            QTimer::singleShot(100, qApp, &QApplication::quit);
-        }
-    }
-
-private slots:
-    void onBrowseClicked() {
-        QString fileName = QFileDialog::getOpenFileName(this,
-            tr("Open PDF File"), "", tr("PDF Files (*.pdf)"));
-        if (!fileName.isEmpty()) {
-            m_filePathEdit->setText(fileName);
-        }
-    }
-
-    void onPdfAnalyzeClicked() {
-        clearAllResults();
-
-        QString pdfPath = m_filePathEdit->text();
-        if (pdfPath.isEmpty()) {
-            QMessageBox::warning(this, tr("Warning"), tr("Please select a PDF file first."));
-            return;
-        }
-
-        startSpinner();
-        m_pdfAnalyzeButton->setEnabled(false);
-        m_textAnalyzeButton->setEnabled(false);
-
-        appendToLog("=== Starting PDF Analysis ===");
-        appendToLog(QString("PDF File: %1").arg(pdfPath));
-
-        // Extract text from PDF
-        if (!extractPdfText(pdfPath)) {
-            stopSpinner();
-            m_pdfAnalyzeButton->setEnabled(true);
-            m_textAnalyzeButton->setEnabled(true);
-            return;
-        }
-
-        // Show extracted text
-        m_extractedTextEdit->setPlainText(m_extractedText);
-        m_resultsTabWidget->setCurrentIndex(0);
-
-        // Run analysis
-        runAnalysis();
-    }
-
-    void onTextAnalyzeClicked() {
-        clearAllResults();
-
-        QString rawText = m_pasteTextEdit->toPlainText();
-        if (rawText.isEmpty()) {
-            QMessageBox::warning(this, tr("Warning"), tr("Please paste or enter text first."));
-            return;
-        }
-
-        startSpinner();
-        m_pdfAnalyzeButton->setEnabled(false);
-        m_textAnalyzeButton->setEnabled(false);
-
-        appendToLog("=== Starting Text Analysis ===");
-        appendToLog("Text source: Pasted/Manual input");
-
-        // Sanitize the text
-        m_extractedText = sanitizeText(rawText);
-        appendToLog(QString("Text length: %1 characters").arg(m_extractedText.length()));
-
-        // Show extracted/sanitized text
-        m_extractedTextEdit->setPlainText(m_extractedText);
-        m_resultsTabWidget->setCurrentIndex(0);
-
-        // Run analysis
-        runAnalysis();
-    }
-
-    void onSettingsClicked() {
-        SettingsDialog dialog(this);
-        if (dialog.exec() == QDialog::Accepted) {
-            // Reload configuration
-            loadConfiguration();
-            QMessageBox::information(this, tr("Settings"), tr("Configuration updated successfully."));
-        }
-    }
 
 private:
-    void setupUi() {
-        auto *centralWidget = new QWidget(this);
+    void initDatabase() {
+        QString dbPath = QDir::current().absoluteFilePath("settings.db");
+
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE");
+        db.setDatabaseName(dbPath);
+
+        if (!db.open()) {
+            QMessageBox::critical(nullptr, "Database Error",
+                                "Failed to open database: " + db.lastError().text());
+            return;
+        }
+
+        QSqlQuery query(db);
+
+        // Create table if it doesn't exist - with per-prompt settings
+        QString createTable = R"(
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY,
+                url TEXT,
+                model_name TEXT,
+                overall_timeout TEXT,
+
+                summary_temperature TEXT,
+                summary_context_length TEXT,
+                summary_timeout TEXT,
+                summary_preprompt TEXT,
+                summary_prompt TEXT,
+
+                keyword_temperature TEXT,
+                keyword_context_length TEXT,
+                keyword_timeout TEXT,
+                keyword_preprompt TEXT,
+                keyword_prompt TEXT,
+
+                refinement_temperature TEXT,
+                refinement_context_length TEXT,
+                refinement_timeout TEXT,
+                keyword_refinement_preprompt TEXT,
+                preprompt_refinement_prompt TEXT
+            )
+        )";
+
+        if (!query.exec(createTable)) {
+            QMessageBox::critical(nullptr, "Database Error",
+                                "Failed to create table: " + query.lastError().text());
+            return;
+        }
+
+        // Check if we have any records
+        if (!query.exec("SELECT COUNT(*) FROM settings") || !query.next()) {
+            return;
+        }
+
+        int count = query.value(0).toInt();
+
+        // If no records, insert default one
+        if (count == 0) {
+            QString insertDefaults = R"(
+                INSERT INTO settings (
+                    url, model_name, overall_timeout,
+                    summary_temperature, summary_context_length, summary_timeout,
+                    summary_preprompt, summary_prompt,
+                    keyword_temperature, keyword_context_length, keyword_timeout,
+                    keyword_preprompt, keyword_prompt,
+                    refinement_temperature, refinement_context_length, refinement_timeout,
+                    keyword_refinement_preprompt, preprompt_refinement_prompt
+                ) VALUES (
+                    :url, :model_name, :overall_timeout,
+                    :summary_temperature, :summary_context_length, :summary_timeout,
+                    :summary_preprompt, :summary_prompt,
+                    :keyword_temperature, :keyword_context_length, :keyword_timeout,
+                    :keyword_preprompt, :keyword_prompt,
+                    :refinement_temperature, :refinement_context_length, :refinement_timeout,
+                    :keyword_refinement_preprompt, :preprompt_refinement_prompt
+                )
+            )";
+
+            query.prepare(insertDefaults);
+            query.bindValue(":url", "http://172.20.10.3:8090/v1/chat/completions");
+            query.bindValue(":model_name", "gpt-oss-120b");
+            query.bindValue(":overall_timeout", "120000");
+
+            // Summary settings (optimized for gpt-oss-120b)
+            query.bindValue(":summary_temperature", "0.7");
+            query.bindValue(":summary_context_length", "16000");
+            query.bindValue(":summary_timeout", "120000");
+            query.bindValue(":summary_preprompt", "You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'");
+            query.bindValue(":summary_prompt", "Please provide a summary:\n"
+                          "1. Main research question or hypothesis\n"
+                          "2. Key findings (3-5 bullet points with specific results)\n"
+                          "3. Methodology and approach used\n"
+                          "4. Significance and contribution to the field\n"
+                          "5. Potential applications, implications, or future directions\n\n"
+                          "Be concise yet comprehensive. Focus on information valuable for literature review inclusion. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
+                          "Text:\n{text}");
+
+            // Keyword settings (optimized for gpt-oss-120b)
+            query.bindValue(":keyword_temperature", "0.3");
+            query.bindValue(":keyword_context_length", "8000");
+            query.bindValue(":keyword_timeout", "60000");
+            query.bindValue(":keyword_preprompt", DEFAULT_KEYWORD_PREPROMPT);
+            query.bindValue(":keyword_prompt", "Extract and return a comma-delimited list containing: "
+                          "organism names (species, genus), "
+                          "chemicals (including specific proteins, enzymes, drugs, compounds), "
+                          "statistical methods (test names, analysis techniques), "
+                          "environmental factors (conditions, locations, habitats), "
+                          "chemical reactions (reaction types, mechanisms), "
+                          "computational methods (algorithms, models, software tools), "
+                          "and research techniques (experimental methods, instruments).\n\n"
+                          "Format: Return only the shortest complete scientific form of each term, separated by commas. Do not include explanations, titles, or suffixes. If unable to extract relevant keywords from the text, return 'Not Evaluated'.\n\n"
+                          "Text:\n{text}");
+
+            // Refinement settings (optimized for gpt-oss-120b)
+            query.bindValue(":refinement_temperature", "0.8");
+            query.bindValue(":refinement_context_length", "8000");
+            query.bindValue(":refinement_timeout", "60000");
+            query.bindValue(":keyword_refinement_preprompt", DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
+            query.bindValue(":preprompt_refinement_prompt", DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
+
+            if (!query.exec()) {
+                QMessageBox::warning(nullptr, "Database Warning",
+                                   "Failed to insert default settings: " + query.lastError().text());
+            }
+        }
+    }
+
+    void setupUI() {
+        auto *centralWidget = new QWidget();
         setCentralWidget(centralWidget);
 
         auto *mainLayout = new QVBoxLayout(centralWidget);
-        mainLayout->setContentsMargins(5, 5, 5, 5);
+        mainLayout->setContentsMargins(5, 5, 5, 0);
+        mainLayout->setSpacing(0);
 
-        // Main tab widget for top-level organization
-        auto *mainTabWidget = new QTabWidget();
+        // Top toolbar with just settings button
+        auto *toolbar = new QHBoxLayout();
+        toolbar->setContentsMargins(5, 5, 5, 5);
 
-        // === INPUT SOURCES TAB ===
+        toolbar->addStretch();
+
+        // Settings button on the right with gear icon only
+        m_settingsButton = new QPushButton("⚙");
+        m_settingsButton->setFixedSize(28, 28);
+        m_settingsButton->setToolTip("Settings");
+        m_settingsButton->setStyleSheet(
+            "QPushButton { "
+            "   font-size: 18px; "
+            "   border: 1px solid #ccc; "
+            "   border-radius: 3px; "
+            "   background-color: #f8f8f8; "
+            "}"
+            "QPushButton:hover { "
+            "   background-color: #e8e8e8; "
+            "}"
+        );
+        toolbar->addWidget(m_settingsButton);
+
+        mainLayout->addLayout(toolbar);
+
+        // Create main tab widget that uses full window
+        m_mainTabWidget = new QTabWidget();
+        m_mainTabWidget->setStyleSheet("QTabWidget::pane { border: 1px solid #ccc; }");
+
+        // === INPUT TAB ===
+        auto *inputTab = new QWidget();
+        auto *inputLayout = new QVBoxLayout(inputTab);
+
         m_inputTabWidget = new QTabWidget();
 
         // PDF Input Tab
         auto *pdfTab = new QWidget();
-        auto *pdfMainLayout = new QVBoxLayout(pdfTab);
-        pdfMainLayout->setAlignment(Qt::AlignTop);  // Align content to top
+        auto *pdfLayout = new QVBoxLayout(pdfTab);
 
-        auto *pdfContentWidget = new QWidget();
-        auto *pdfLayout = new QVBoxLayout(pdfContentWidget);
-        pdfLayout->setSpacing(10);
+        auto *fileGroup = new QGroupBox("PDF File");
+        auto *fileLayout = new QGridLayout(fileGroup);
 
-        auto *fileLayout = new QHBoxLayout();
-        fileLayout->addWidget(new QLabel(tr("PDF File:")));
         m_filePathEdit = new QLineEdit();
-        m_filePathEdit->setStyleSheet("QLineEdit { background-color: #FFFFFF; color: #000000; }");
-        fileLayout->addWidget(m_filePathEdit);
-        m_browseButton = new QPushButton(tr("Browse..."));
-        connect(m_browseButton, &QPushButton::clicked, this, &PDFExtractorGUI::onBrowseClicked);
-        fileLayout->addWidget(m_browseButton);
-        pdfLayout->addLayout(fileLayout);
+        m_filePathEdit->setPlaceholderText("Select a PDF file...");
+        fileLayout->addWidget(m_filePathEdit, 0, 0);
 
-        // PDF Options
-        auto *pdfOptionsLayout = new QHBoxLayout();
-        pdfOptionsLayout->addWidget(new QLabel(tr("Pages:")));
-        m_startPageSpin = new QSpinBox();
-        m_startPageSpin->setMinimum(1);
-        m_startPageSpin->setValue(1);
-        pdfOptionsLayout->addWidget(m_startPageSpin);
-        pdfOptionsLayout->addWidget(new QLabel(tr("to")));
-        m_endPageSpin = new QSpinBox();
-        m_endPageSpin->setMinimum(0);
-        m_endPageSpin->setValue(0);
-        m_endPageSpin->setSpecialValueText(tr("Last"));
-        pdfOptionsLayout->addWidget(m_endPageSpin);
+        m_browseButton = new QPushButton("Browse...");
+        fileLayout->addWidget(m_browseButton, 0, 1);
 
-        m_preserveCopyrightCheck = new QCheckBox(tr("Preserve Copyright"));
-        pdfOptionsLayout->addWidget(m_preserveCopyrightCheck);
-        pdfOptionsLayout->addStretch();
+        // Page range and copyright controls removed as requested
 
-        m_pdfAnalyzeButton = new QPushButton(tr("Extract && Analyze PDF"));
-        m_pdfAnalyzeButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; }");
-        connect(m_pdfAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::onPdfAnalyzeClicked);
-        pdfOptionsLayout->addWidget(m_pdfAnalyzeButton);
+        pdfLayout->addWidget(fileGroup);
+        pdfLayout->addStretch();
 
-        pdfLayout->addLayout(pdfOptionsLayout);
+        // Button layout for PDF tab
+        auto *pdfButtonLayout = new QHBoxLayout();
+        pdfButtonLayout->addStretch();
+        m_pdfAnalyzeButton = new QPushButton("Analyze");
+        // Use default button style, no custom stylesheet
+        pdfButtonLayout->addWidget(m_pdfAnalyzeButton);
+        pdfLayout->addLayout(pdfButtonLayout);
 
-        pdfMainLayout->addWidget(pdfContentWidget);
-        pdfMainLayout->addStretch();  // Push content to top
-
-        m_inputTabWidget->addTab(pdfTab, tr("PDF Input"));
+        m_inputTabWidget->addTab(pdfTab, "PDF File");
 
         // Text Input Tab
         auto *textTab = new QWidget();
         auto *textLayout = new QVBoxLayout(textTab);
 
-        auto *pasteLabel = new QLabel(tr("Paste or enter text below:"));
-        textLayout->addWidget(pasteLabel);
+        // Instruction label removed as requested
 
         m_pasteTextEdit = new QTextEdit();
-        m_pasteTextEdit->setStyleSheet("QTextEdit { background-color: #FFFFFF; color: #000000; }");
-        m_pasteTextEdit->setPlaceholderText(tr("Paste text from web, OCR, or other sources here..."));
+        m_pasteTextEdit->setPlaceholderText("Paste your text here for analysis...");
         textLayout->addWidget(m_pasteTextEdit);
 
+        // Button layout for Text tab
         auto *textButtonLayout = new QHBoxLayout();
         textButtonLayout->addStretch();
-        m_textAnalyzeButton = new QPushButton(tr("Analyze Text"));
-        m_textAnalyzeButton->setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 10px; }");
-        connect(m_textAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::onTextAnalyzeClicked);
+        m_textAnalyzeButton = new QPushButton("Analyze");
+        // Use default button style, no custom stylesheet
         textButtonLayout->addWidget(m_textAnalyzeButton);
         textLayout->addLayout(textButtonLayout);
 
-        m_inputTabWidget->addTab(textTab, tr("Text Input"));
+        m_inputTabWidget->addTab(textTab, "Paste Text");
 
-        // Add input tabs to main tab widget
-        mainTabWidget->addTab(m_inputTabWidget, tr("INPUT SOURCES"));
+        inputLayout->addWidget(m_inputTabWidget);
+        m_mainTabWidget->addTab(inputTab, "📥 Input");
 
-        // === ANALYSIS RESULTS TAB ===
+        // === OUTPUT/RESULTS TAB ===
+        auto *outputTab = new QWidget();
+        auto *outputLayout = new QVBoxLayout(outputTab);
+
         m_resultsTabWidget = new QTabWidget();
 
-        // Extracted Text Tab
         m_extractedTextEdit = new QTextEdit();
-        m_extractedTextEdit->setStyleSheet("QTextEdit { background-color: #FAFAFA; color: #000000; }");
         m_extractedTextEdit->setReadOnly(true);
-        m_resultsTabWidget->addTab(m_extractedTextEdit, tr("Extracted Text"));
+        m_extractedTextEdit->setStyleSheet("QTextEdit { font-family: 'Consolas', monospace; }");
+        m_resultsTabWidget->addTab(m_extractedTextEdit, "Extracted Text");
 
-        // Summary Tab
         m_summaryTextEdit = new QTextEdit();
-        m_summaryTextEdit->setStyleSheet("QTextEdit { background-color: #FAFAFA; color: #000000; }");
         m_summaryTextEdit->setReadOnly(true);
-        m_resultsTabWidget->addTab(m_summaryTextEdit, tr("Summary"));
+        m_summaryTextEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 14px; line-height: 1.6; }");
+        m_resultsTabWidget->addTab(m_summaryTextEdit, "Summary Result");
 
-        // Keywords Tab
+        // Keywords tab with three sections
+        auto *keywordsWidget = new QWidget();
+        auto *keywordsLayout = new QVBoxLayout(keywordsWidget);
+
+        auto *keywordsSplitter = new QSplitter(Qt::Vertical);
+
+        // Original keywords
+        auto *originalGroup = new QGroupBox("Original Keywords");
+        auto *originalLayout = new QVBoxLayout(originalGroup);
         m_keywordsTextEdit = new QTextEdit();
-        m_keywordsTextEdit->setStyleSheet("QTextEdit { background-color: #FAFAFA; color: #000000; }");
         m_keywordsTextEdit->setReadOnly(true);
-        m_resultsTabWidget->addTab(m_keywordsTextEdit, tr("Keywords"));
+        m_keywordsTextEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
+        originalLayout->addWidget(m_keywordsTextEdit);
+        keywordsSplitter->addWidget(originalGroup);
 
-        // Log Tab
+        // Suggested improvements
+        auto *suggestionsGroup = new QGroupBox("Suggested Prompt Improvements");
+        auto *suggestionsLayout = new QVBoxLayout(suggestionsGroup);
+        m_promptSuggestionsEdit = new QTextEdit();
+        m_promptSuggestionsEdit->setReadOnly(true);
+        m_promptSuggestionsEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
+        suggestionsLayout->addWidget(m_promptSuggestionsEdit);
+        keywordsSplitter->addWidget(suggestionsGroup);
+
+        // Refined keywords
+        auto *refinedGroup = new QGroupBox("Keywords with Suggestions");
+        auto *refinedLayout = new QVBoxLayout(refinedGroup);
+        m_refinedKeywordsEdit = new QTextEdit();
+        m_refinedKeywordsEdit->setReadOnly(true);
+        m_refinedKeywordsEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
+        refinedLayout->addWidget(m_refinedKeywordsEdit);
+        keywordsSplitter->addWidget(refinedGroup);
+
+        keywordsSplitter->setSizes({100, 100, 100}); // Equal sizes
+        keywordsLayout->addWidget(keywordsSplitter);
+
+        m_resultsTabWidget->addTab(keywordsWidget, "Keywords Result");
+
         m_logTextEdit = new QPlainTextEdit();
-        m_logTextEdit->setStyleSheet("QPlainTextEdit { background-color: #FAFAFA; color: #000000; }");
         m_logTextEdit->setReadOnly(true);
-        QFont monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        monoFont.setPointSize(9);
-        m_logTextEdit->setFont(monoFont);
-        m_resultsTabWidget->addTab(m_logTextEdit, tr("LLM Log"));
+        m_logTextEdit->setMaximumBlockCount(1000);
+        // Use default background color for log
+        m_resultsTabWidget->addTab(m_logTextEdit, "Run Log");
 
-        // Add results tabs to main tab widget
-        mainTabWidget->addTab(m_resultsTabWidget, tr("ANALYSIS RESULTS"));
+        outputLayout->addWidget(m_resultsTabWidget);
+        m_mainTabWidget->addTab(outputTab, "📤 Output");
 
-        // Add main tab widget to layout
-        mainLayout->addWidget(mainTabWidget);
+        mainLayout->addWidget(m_mainTabWidget);
 
-        // Status bar at bottom
-        auto *statusWidget = new QWidget();
-        auto *statusLayout = new QHBoxLayout(statusWidget);
+        // Create status bar at the bottom
+        auto *statusBar = new QFrame();
+        statusBar->setFrameStyle(QFrame::Box | QFrame::Sunken);
+        statusBar->setMaximumHeight(30);
+        auto *statusLayout = new QHBoxLayout(statusBar);
         statusLayout->setContentsMargins(5, 2, 5, 2);
 
-        m_settingsButton = new QPushButton(tr("Settings"));
-        m_settingsButton->setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 6px 12px; }");
-        connect(m_settingsButton, &QPushButton::clicked, this, &PDFExtractorGUI::onSettingsClicked);
-        statusLayout->addWidget(m_settingsButton);
-
-        m_statusLabel = new QLabel(tr("Ready"));
+        // Status label on the left
+        m_statusLabel = new QLabel("Ready");
+        m_statusLabel->setStyleSheet("QLabel { font-size: 13px; }");
         statusLayout->addWidget(m_statusLabel);
 
+        statusLayout->addStretch();
+
+        // Spinner on the right (hidden by default)
         m_spinnerLabel = new QLabel();
-        m_spinnerLabel->setVisible(false);
-        setupSpinner();
+        m_spinnerLabel->setStyleSheet("QLabel { font-size: 16px; color: #2196F3; }");
+        m_spinnerLabel->hide();
         statusLayout->addWidget(m_spinnerLabel);
 
-        statusLayout->addStretch();
-        mainLayout->addWidget(statusWidget);
+        // Create simple text spinner timer
+        m_spinnerTimer = new QTimer(this);
+        m_spinnerTimer->setInterval(100);
+        connect(m_spinnerTimer, &QTimer::timeout, this, [this]() {
+            static int frame = 0;
+            const QString frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+            m_spinnerLabel->setText(frames[frame % 10]);
+            frame++;
+        });
+
+        mainLayout->addWidget(statusBar);
     }
 
-    void clearAllResults() {
-        m_extractedText.clear();
-        m_extractedTextEdit->clear();
-        m_summaryTextEdit->clear();
-        m_keywordsTextEdit->clear();
-        m_logTextEdit->clear();
-        m_conversationLog.clear();
+    void connectSignals() {
+        connect(m_browseButton, &QPushButton::clicked, this, &PDFExtractorGUI::browseForPDF);
+        connect(m_pdfAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzePDF);
+        connect(m_textAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzeText);
+        connect(m_settingsButton, &QPushButton::clicked, this, &PDFExtractorGUI::openSettings);
     }
 
-    void appendToLog(const QString &message) {
-        QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
-        QString logEntry = QString("[%1] %2").arg(timestamp).arg(message);
-        m_conversationLog.append(logEntry);
-        m_logTextEdit->appendPlainText(logEntry);
+private slots:
+    void browseForPDF() {
+        QString fileName = QFileDialog::getOpenFileName(this,
+            "Select PDF File", "", "PDF Files (*.pdf);;All Files (*)");
 
-        // Also print to console for debugging
-        std::cout << logEntry.toStdString() << std::endl;
-    }
+        if (!fileName.isEmpty()) {
+            m_filePathEdit->setText(fileName);
 
-    void setupSpinner() {
-        m_spinnerMovie = new QMovie(":/spinner.gif");
-        if (m_spinnerMovie->isValid()) {
-            m_spinnerLabel->setMovie(m_spinnerMovie);
-        } else {
-            delete m_spinnerMovie;
-            m_spinnerMovie = nullptr;
-            // Fallback to text-based spinner
-            m_spinnerTimer = new QTimer(this);
-            connect(m_spinnerTimer, &QTimer::timeout, this, [this]() {
-                static int frame = 0;
-                const QString frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-                m_spinnerLabel->setText(frames[frame % 10]);
-                frame++;
-            });
+            // Load PDF to get page count
+            if (m_pdfDocument->load(fileName) == QPdfDocument::Error::None) {
+                int pageCount = m_pdfDocument->pageCount();
+                // Page spin controls removed
+
+                logMessage(QString("Loaded PDF: %1 (%2 pages)").arg(fileName).arg(pageCount));
+            }
         }
+    }
+
+    void analyzePDF() {
+        QString pdfPath = m_filePathEdit->text();
+        if (pdfPath.isEmpty()) {
+            QMessageBox::warning(this, "Warning", "Please select a PDF file first.");
+            return;
+        }
+
+        setUIEnabled(false);
+        startSpinner();
+        m_statusLabel->setText("Extracting PDF...");
+
+        // Extract text
+        if (!extractPDFText(pdfPath)) {
+            setUIEnabled(true);
+            stopSpinner();
+            m_statusLabel->setText("Extraction failed");
+            return;
+        }
+
+        m_statusLabel->setText("Analyzing with AI...");
+
+        // Process with AI
+        processWithAI();
+
+        stopSpinner();
+        setUIEnabled(true);
+        m_statusLabel->setText("Complete");
+        m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
+    }
+
+    void analyzeText() {
+        QString text = m_pasteTextEdit->toPlainText();
+        if (text.isEmpty()) {
+            QMessageBox::warning(this, "Warning", "Please paste some text first.");
+            return;
+        }
+
+        setUIEnabled(false);
+        startSpinner();
+        m_statusLabel->setText("Analyzing text with AI...");
+
+        m_extractedText = text;
+        m_extractedTextEdit->setPlainText(text);
+        m_resultsTabWidget->setCurrentIndex(0);
+        m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
+
+        processWithAI();
+
+        stopSpinner();
+        setUIEnabled(true);
+        m_statusLabel->setText("Complete");
+    }
+
+    void openSettings() {
+        SettingsDialog dialog(this);
+        dialog.exec();
+    }
+
+private:
+    void logMessage(const QString &msg) {
+        QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+        m_logTextEdit->appendPlainText(QString("[%1] %2").arg(timestamp).arg(msg));
+    }
+
+    void setUIEnabled(bool enabled) {
+        m_pdfAnalyzeButton->setEnabled(enabled);
+        m_textAnalyzeButton->setEnabled(enabled);
+        m_browseButton->setEnabled(enabled);
+        m_settingsButton->setEnabled(enabled);
     }
 
     void startSpinner() {
         m_spinnerLabel->setVisible(true);
-        if (m_spinnerMovie) {
-            m_spinnerMovie->start();
-        } else if (m_spinnerTimer) {
-            m_spinnerTimer->start(100);
-        }
+        m_spinnerTimer->start();
     }
 
     void stopSpinner() {
         m_spinnerLabel->setVisible(false);
-        if (m_spinnerMovie) {
-            m_spinnerMovie->stop();
-        } else if (m_spinnerTimer) {
-            m_spinnerTimer->stop();
-        }
+        m_spinnerTimer->stop();
     }
 
-    bool extractPdfText(const QString &pdfPath) {
-        appendToLog("Loading PDF document...");
+    bool extractPDFText(const QString &pdfPath) {
+        logMessage("Starting PDF extraction...");
 
         if (m_pdfDocument->load(pdfPath) != QPdfDocument::Error::None) {
-            appendToLog("ERROR: Failed to load PDF");
-            QMessageBox::critical(this, tr("Error"), tr("Failed to load PDF file."));
+            logMessage("Failed to load PDF");
             return false;
         }
 
+        int startPage = 0;
+        int endPage = m_pdfDocument->pageCount() - 1;
         int pageCount = m_pdfDocument->pageCount();
-        int startPage = m_startPageSpin->value() - 1;
-        int endPage = (m_endPageSpin->value() == 0) ? pageCount - 1 : m_endPageSpin->value() - 1;
 
-        appendToLog(QString("Extracting pages %1 to %2 of %3").arg(startPage+1).arg(endPage+1).arg(pageCount));
-        m_statusLabel->setText(QString("Extracting %1 pages...").arg(endPage - startPage + 1));
+        if (endPage >= pageCount) {
+            endPage = pageCount - 1;
+        }
 
         QString extractedText;
-        for (int i = startPage; i <= endPage && i < pageCount; ++i) {
-            extractedText += m_pdfDocument->getAllText(i).text() + "\n";
+
+        for (int i = startPage; i <= endPage; ++i) {
+            QString pageText = m_pdfDocument->getAllText(i).text();
+
+            // Always strip copyright notices for LLM
+            pageText = removeCopyrightNotices(pageText);
+
+            pageText = sanitizeText(pageText);
+            extractedText += pageText + "\n\n";
+
+            logMessage(QString("Extracted page %1/%2").arg(i + 1).arg(pageCount));
         }
 
-        if (!m_preserveCopyrightCheck->isChecked()) {
-            extractedText = cleanCopyrightText(extractedText);
-            appendToLog("Removed copyright notices");
-        }
+        m_extractedText = extractedText.trimmed();
+        m_extractedTextEdit->setPlainText(m_extractedText);
+        m_resultsTabWidget->setCurrentIndex(0);
+        m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
 
-        m_extractedText = extractedText;
-        appendToLog(QString("Extracted %1 characters").arg(m_extractedText.length()));
+        logMessage(QString("Extraction complete: %1 characters").arg(m_extractedText.length()));
         return true;
     }
 
-    void runAnalysis() {
-        m_statusLabel->setText("Generating summary...");
-        generateSummary();
-
-        m_statusLabel->setText("Extracting keywords...");
-        generateKeywords();
-
-        m_statusLabel->setText("Analysis complete");
-        stopSpinner();
-        m_pdfAnalyzeButton->setEnabled(true);
-        m_textAnalyzeButton->setEnabled(true);
-    }
-
-    void generateSummary() {
-        appendToLog("\n=== SUMMARY GENERATION ===");
-
-        QString systemPrompt = m_config.value("lm_studio.summary_system_prompt",
-            "You are an expert scientific reviewer. Provide clear, concise analysis of research papers.");
-        QString userPrompt = m_config.value("prompts.summary");
-        double temp = m_config.value("lm_studio.summary_temperature", m_config.value("lmstudio.temperature")).toDouble();
-        int maxTokens = m_config.value("lm_studio.summary_max_tokens", m_config.value("lmstudio.max_tokens")).toInt();
-        QString model = m_config.value("lm_studio.summary_model_name", m_config.value("lmstudio.model_name"));
-
-        QString summary = sendToLMStudio(systemPrompt, userPrompt, m_extractedText, temp, maxTokens, model);
-        m_summaryTextEdit->setPlainText(summary);
-    }
-
-    void generateKeywords() {
-        appendToLog("\n=== KEYWORD EXTRACTION ===");
-
-        QString systemPrompt = m_config.value("lm_studio.keyword_system_prompt",
-            "You are a scientific keyword extraction assistant.");
-        QString userPrompt = m_config.value("prompts.keywords");
-        double temp = m_config.value("lm_studio.keyword_temperature", m_config.value("lmstudio.temperature")).toDouble();
-        int maxTokens = m_config.value("lm_studio.keyword_max_tokens", m_config.value("lmstudio.max_tokens")).toInt();
-        QString model = m_config.value("lm_studio.keyword_model_name", m_config.value("lmstudio.model_name"));
-
-        // First extraction
-        appendToLog("Running keyword extraction with current prompt...");
-        QString keywords = sendToLMStudio(systemPrompt, userPrompt, m_extractedText, temp, maxTokens, model);
-
-        // Meta-analysis for improvement
-        appendToLog("\nRunning meta-analysis for prompt improvement...");
-        QString metaSystemPrompt = "You are an expert at analyzing scientific papers and optimizing keyword extraction prompts. You understand prompt engineering for LLMs.";
-        QString metaUserPrompt = QString(
-            "Analyze this keyword extraction scenario:\n\n"
-            "Current prompt: %1\n\n"
-            "Paper content (first 3000 chars):\n%2\n\n"
-            "Keywords extracted: %3\n\n"
-            "Based on the paper content and extraction results, provide an improved keyword extraction prompt "
-            "that would better capture the key terms, concepts, methods, and entities from this specific type of paper.\n\n"
-            "IMPORTANT: Return ONLY the complete prompt text. Do not include any explanation or commentary.\n"
-            "The prompt must:\n"
-            "1. Start with clear extraction instructions\n"
-            "2. End with the exact text: Text:\\n{text}\n"
-            "3. Use {text} as a placeholder for the paper content\n"
-            "4. Ask for comma-delimited output\n"
-            "5. Be specific to the scientific domain of this paper\n\n"
-            "Example of correct format:\n"
-            "Extract a comma-delimited list of proteins, ligands, thermodynamic parameters, experimental methods, and statistical analyses. Include specific chemical compounds and molecular interactions mentioned. Text:\n{text}"
-        ).arg(userPrompt).arg(m_extractedText.left(3000)).arg(keywords.left(500));
-
-        QString improvedPrompt = sendToLMStudio(metaSystemPrompt, metaUserPrompt, "", 0.7, 1000, model);
-
-        // Clean up the improved prompt response - sometimes LLMs add extra formatting
-        improvedPrompt = improvedPrompt.trimmed();
-
-        // Check if the prompt looks valid (should contain "Text:" and "{text}")
-        bool promptValid = improvedPrompt.contains("Text:") && improvedPrompt.contains("{text}");
-
-        QString improvedKeywords;
-        if (!improvedPrompt.isEmpty() && improvedPrompt != userPrompt && promptValid) {
-            appendToLog("Testing improved prompt...");
-            appendToLog(QString("Improved prompt: %1").arg(improvedPrompt));
-            improvedKeywords = sendToLMStudio(systemPrompt, improvedPrompt, m_extractedText, temp, maxTokens, model);
-            appendToLog(QString("Improved keywords result: %1").arg(improvedKeywords));
-        } else {
-            appendToLog(QString("Invalid improved prompt received: %1").arg(improvedPrompt));
-            improvedPrompt = "(Invalid prompt format received from AI)";
+    void processWithAI() {
+        if (m_extractedText.isEmpty()) {
+            logMessage("No text to process");
+            return;
         }
 
-        if (!improvedPrompt.isEmpty() && improvedPrompt != userPrompt) {
+        // Get settings from database
+        QSqlQuery query("SELECT * FROM settings LIMIT 1");
+        if (!query.exec() || !query.next()) {
+            logMessage("Failed to load settings from database");
+            return;
+        }
 
-            QString finalOutput = QString(
-                "=== KEYWORD EXTRACTION RESULTS ===\n\n"
-                "## Keywords from CURRENT prompt:\n%1\n\n"
-                "---\n\n"
-                "## Keywords from SUGGESTED prompt:\n%2\n\n"
-                "---\n\n"
-                "## CURRENT PROMPT (from config):\n%3\n\n"
-                "---\n\n"
-                "## SUGGESTED PROMPT (AI-optimized for this paper):\n%4\n\n"
-                "---\n\n"
-                "To update your config with the suggested prompt:\n"
-                "1. Click Settings button\n"
-                "2. Replace the keywords prompt with the suggested version\n"
-                "3. Save the configuration"
-            ).arg(keywords.isEmpty() ? "(No keywords extracted)" : keywords)
-             .arg(improvedKeywords.isEmpty() ? "(No keywords extracted)" : improvedKeywords)
-             .arg(userPrompt)
-             .arg(improvedPrompt);
+        QString url = query.value("url").toString();
+        QString modelName = query.value("model_name").toString();
 
-            m_keywordsTextEdit->setPlainText(finalOutput);
+        // Generate summary with per-prompt settings
+        double summaryTemp = query.value("summary_temperature").toString().toDouble();
+        int summaryContext = query.value("summary_context_length").toString().toInt();
+        int summaryTimeout = query.value("summary_timeout").toString().toInt();
+        QString summaryPreprompt = query.value("summary_preprompt").toString();
+        QString summaryPrompt = query.value("summary_prompt").toString();
+        summaryPrompt.replace("{text}", m_extractedText);
 
-            // Save to learning file
-            QFile learningFile("keyword_prompts_learned.txt");
-            if (learningFile.open(QIODevice::Append | QIODevice::Text)) {
-                QTextStream stream(&learningFile);
-                stream << "\n=== " << QDateTime::currentDateTime().toString(Qt::ISODate) << " ===" << Qt::endl;
-                stream << "Original keywords: " << keywords.left(200) << Qt::endl;
-                stream << "Improved keywords: " << improvedKeywords.left(200) << Qt::endl;
-                stream << "Original prompt: " << userPrompt << Qt::endl;
-                stream << "Improved prompt: " << improvedPrompt << Qt::endl;
-                stream << "===\n" << Qt::endl;
-                learningFile.close();
-            }
-        } else {
-            m_keywordsTextEdit->setPlainText(QString(
-                "=== KEYWORD EXTRACTION RESULTS ===\n\n%1\n\n"
-                "---\n\n"
-                "Current prompt is well-suited for this paper type.\n"
-                "No improvements suggested."
-            ).arg(keywords));
+        QString fullSummaryPrompt = summaryPreprompt + "\n\n" + summaryPrompt;
+        QString summary = callLMStudio(url, modelName, fullSummaryPrompt, summaryTemp, summaryContext, summaryTimeout);
+
+        if (!summary.isEmpty()) {
+            m_summaryTextEdit->setPlainText(summary);
+            logMessage("Summary generated");
+        }
+
+        // Generate keywords with per-prompt settings
+        double keywordTemp = query.value("keyword_temperature").toString().toDouble();
+        int keywordContext = query.value("keyword_context_length").toString().toInt();
+        int keywordTimeout = query.value("keyword_timeout").toString().toInt();
+        QString keywordPreprompt = query.value("keyword_preprompt").toString();
+        QString keywordPrompt = query.value("keyword_prompt").toString();
+        keywordPrompt.replace("{text}", m_extractedText);
+
+        QString fullKeywordPrompt = keywordPreprompt + "\n\n" + keywordPrompt;
+        QString keywords = callLMStudio(url, modelName, fullKeywordPrompt, keywordTemp, keywordContext, keywordTimeout);
+
+        if (!keywords.isEmpty()) {
+            m_keywordsTextEdit->setPlainText(keywords);
+            logMessage("Keywords extracted");
         }
     }
 
-    QString sendToLMStudio(const QString &systemPrompt, const QString &userPrompt, const QString &text,
-                          double temperature, int maxTokens, const QString &model) {
-        appendToLog("\n--- LLM Request ---");
-        appendToLog(QString("Model: %1, Temp: %2, MaxTokens: %3").arg(model).arg(temperature).arg(maxTokens));
+    QString callLMStudio(const QString &url, const QString &model, const QString &prompt,
+                        double temperature, int maxTokens, int timeout) {
+        logMessage(QString("Calling LM Studio API at %1").arg(url));
 
-        // Convert escaped newlines
-        QString cleanSystemPrompt = systemPrompt;
-        cleanSystemPrompt.replace("\\n", "\n");
-        QString cleanUserPrompt = userPrompt;
-        cleanUserPrompt.replace("\\n", "\n");
-
-        // Replace {text} placeholder
-        QString fullPrompt = cleanUserPrompt;
-        fullPrompt.replace("{text}", text);
-
-        appendToLog("System Prompt:");
-        appendToLog(cleanSystemPrompt);
-        appendToLog("\nUser Prompt (first 500 chars):");
-        appendToLog(fullPrompt.left(500) + (fullPrompt.length() > 500 ? "..." : ""));
-
-        // Build JSON request
-        QJsonObject systemMessage;
-        systemMessage["role"] = "system";
-        systemMessage["content"] = cleanSystemPrompt;
-
-        QJsonObject userMessage;
-        userMessage["role"] = "user";
-        userMessage["content"] = fullPrompt;
+        QJsonObject message;
+        message["role"] = "user";
+        message["content"] = prompt;
 
         QJsonArray messages;
-        messages.append(systemMessage);
-        messages.append(userMessage);
+        messages.append(message);
 
         QJsonObject requestData;
         requestData["model"] = model;
         requestData["messages"] = messages;
         requestData["temperature"] = temperature;
         requestData["max_tokens"] = maxTokens;
-        requestData["stream"] = false;
 
         QJsonDocument doc(requestData);
-        QByteArray jsonData = doc.toJson();
+        QByteArray data = doc.toJson();
 
-        // Log the request
-        appendToLog("Sending request to LM Studio...");
-
-        QNetworkRequest request((QUrl(m_config.value("lmstudio.endpoint"))));
+        QNetworkRequest request;
+        request.setUrl(QUrl(url));
         request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-        QNetworkReply *reply = m_networkManager->post(request, jsonData);
 
         QEventLoop loop;
         QTimer timer;
         timer.setSingleShot(true);
-        timer.setInterval(m_config.value("lmstudio.timeout", "120000").toInt());
+        timer.start(timeout); // Use provided timeout
 
-        connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QNetworkReply *reply = m_networkManager->post(request, data);
+
         connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
 
-        timer.start();
         loop.exec();
 
         QString result;
 
-        if (timer.isActive()) {
-            timer.stop();
-            if (reply->error() == QNetworkReply::NoError) {
-                QByteArray response = reply->readAll();
-                QJsonDocument responseDoc = QJsonDocument::fromJson(response);
-                QJsonObject responseObj = responseDoc.object();
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray response = reply->readAll();
+            QJsonDocument responseDoc = QJsonDocument::fromJson(response);
+            QJsonObject responseObj = responseDoc.object();
 
-                if (responseObj.contains("choices")) {
-                    QJsonArray choices = responseObj["choices"].toArray();
-                    if (!choices.isEmpty()) {
-                        QJsonObject firstChoice = choices[0].toObject();
-                        QJsonObject messageObj = firstChoice["message"].toObject();
-                        result = messageObj["content"].toString();
-                        appendToLog(QString("\n--- LLM Response (%1 chars) ---").arg(result.length()));
-                        appendToLog(result);  // Log the full response without truncation
-                        appendToLog("--- End Response ---");
-                    }
+            if (responseObj.contains("choices")) {
+                QJsonArray choices = responseObj["choices"].toArray();
+                if (!choices.isEmpty()) {
+                    QJsonObject firstChoice = choices[0].toObject();
+                    QJsonObject message = firstChoice["message"].toObject();
+                    result = message["content"].toString();
                 }
-            } else {
-                appendToLog(QString("Network error: %1").arg(reply->errorString()));
             }
+
+            logMessage("API call successful");
         } else {
-            appendToLog("Request timed out");
+            logMessage(QString("API call failed: %1").arg(reply->errorString()));
         }
 
         reply->deleteLater();
         return result;
     }
 
-    QString cleanCopyrightText(const QString &text) {
+    QString removeCopyrightNotices(const QString &text) {
         QString cleaned = text;
+
         QList<QRegularExpression> copyrightPatterns = {
             QRegularExpression("\\(c\\)", QRegularExpression::CaseInsensitiveOption),
             QRegularExpression("\\(C\\)", QRegularExpression::CaseInsensitiveOption),
@@ -940,36 +1125,17 @@ private:
         return result.trimmed();
     }
 
-    void loadConfiguration() {
-        SimpleTomlParser parser;
-        m_config = parser.parse("lmstudio_config.toml");
-
-        // Set defaults if missing
-        if (!m_config.contains("lmstudio.endpoint")) {
-            m_config["lmstudio.endpoint"] = "http://172.20.10.3:8090/v1/chat/completions";
-        }
-        if (!m_config.contains("lmstudio.timeout")) {
-            m_config["lmstudio.timeout"] = "1200000";
-        }
-        if (!m_config.contains("lmstudio.model_name")) {
-            m_config["lmstudio.model_name"] = "gpt-oss-120b";
-        }
-    }
-
-    bool processPDF(const QString &pdfPath, const QString &outputPath, const QCommandLineParser &parser) {
-        // Command line mode processing (simplified for space)
-        return true;
-    }
 
 private:
+    // UI Elements - Main
+    QTabWidget *m_mainTabWidget;
+
     // UI Elements - Input
     QTabWidget *m_inputTabWidget;
     QLineEdit *m_filePathEdit;
     QPushButton *m_browseButton;
     QPushButton *m_pdfAnalyzeButton;
-    QSpinBox *m_startPageSpin;
-    QSpinBox *m_endPageSpin;
-    QCheckBox *m_preserveCopyrightCheck;
+    // Page range and copyright controls removed
 
     QTextEdit *m_pasteTextEdit;
     QPushButton *m_textAnalyzeButton;
@@ -977,99 +1143,35 @@ private:
     QPushButton *m_settingsButton;
     QLabel *m_statusLabel;
     QLabel *m_spinnerLabel;
+    QTimer *m_spinnerTimer;
 
     // UI Elements - Results
     QTabWidget *m_resultsTabWidget;
     QTextEdit *m_extractedTextEdit;
     QTextEdit *m_summaryTextEdit;
     QTextEdit *m_keywordsTextEdit;
+    QTextEdit *m_promptSuggestionsEdit;
+    QTextEdit *m_refinedKeywordsEdit;
     QPlainTextEdit *m_logTextEdit;
 
     // Core objects
     std::unique_ptr<QPdfDocument> m_pdfDocument;
     QNetworkAccessManager *m_networkManager;
-    QMovie *m_spinnerMovie = nullptr;
-    QTimer *m_spinnerTimer = nullptr;
 
-    // Configuration and state
-    QMap<QString, QString> m_config;
+    // State
     QString m_extractedText;
-    QStringList m_conversationLog;
-    bool m_commandLineMode;
 };
 
 #include "main.moc"
 
 int main(int argc, char *argv[])
 {
-    std::cout << "Starting PDF Extractor GUI v3.0..." << std::endl;
-
     QApplication app(argc, argv);
     QApplication::setApplicationName("PDF Extractor GUI");
     QApplication::setApplicationVersion("3.0");
 
-    std::cout << "Qt application initialized" << std::endl;
-
-    QCommandLineParser parser;
-    parser.setApplicationDescription("PDF Extractor with AI Analysis - Redesigned");
-    parser.addHelpOption();
-    parser.addVersionOption();
-
-    // Command line options for backward compatibility
-    parser.addPositionalArgument("pdf", "PDF file to extract text from");
-    parser.addPositionalArgument("output", "Output text file");
-
-    QCommandLineOption pageRangeOption(QStringList() << "p" << "pages", "Page range", "range");
-    parser.addOption(pageRangeOption);
-
-    QCommandLineOption preserveOption("preserve", "Preserve copyright");
-    parser.addOption(preserveOption);
-
-    QCommandLineOption guiOption(QStringList() << "g" << "gui", "Force GUI mode");
-    parser.addOption(guiOption);
-
-    parser.process(app);
-
-    std::cout << "Creating main window..." << std::endl;
     PDFExtractorGUI window;
-
-    if (parser.positionalArguments().size() >= 2 && !parser.isSet(guiOption)) {
-        std::cout << "Processing command line mode" << std::endl;
-        window.processCommandLine(parser);
-    }
-
-    std::cout << "Showing window..." << std::endl;
     window.show();
-    window.raise();
-    window.activateWindow();
-    window.setVisible(true);
 
-    // Force immediate window update
-    window.repaint();
-    QApplication::processEvents();
-
-    std::cout << "Window visible: " << window.isVisible() << std::endl;
-    std::cout << "Window minimized: " << window.isMinimized() << std::endl;
-    std::cout << "Window position: " << window.pos().x() << "," << window.pos().y() << std::endl;
-    std::cout << "Window size: " << window.size().width() << "x" << window.size().height() << std::endl;
-
-    // Force window to foreground after a delay
-    QTimer::singleShot(100, [&window]() {
-        window.showNormal();
-        window.raise();
-        window.activateWindow();
-        window.setWindowState((window.windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
-
-        // Force to foreground on Windows
-        #ifdef Q_OS_WIN
-        HWND hwnd = (HWND)window.winId();
-        SetForegroundWindow(hwnd);
-        ShowWindow(hwnd, SW_SHOW);
-        #endif
-
-        std::cout << "Window forced to foreground" << std::endl;
-    });
-
-    std::cout << "Starting event loop..." << std::endl;
     return app.exec();
 }
