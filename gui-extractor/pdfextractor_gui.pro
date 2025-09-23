@@ -4,9 +4,11 @@ CONFIG += c++17
 TARGET = pdfextractor_gui
 
 SOURCES += main.cpp \
-    promptquery.cpp
+    promptquery.cpp \
+    queryrunner.cpp
 
-HEADERS += promptquery.h
+HEADERS += promptquery.h \
+    queryrunner.h
 
 # Windows specific - ensure console app for debugging
 win32 {

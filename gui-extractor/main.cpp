@@ -44,6 +44,7 @@
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QDir>
+#include "queryrunner.h"
 
 // Default prompts for keyword refinement (new fields)
 const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research";
@@ -478,7 +479,8 @@ class PDFExtractorGUI : public QMainWindow
 
 public:
     PDFExtractorGUI(QWidget *parent = nullptr)
-        : QMainWindow(parent) {
+        : QMainWindow(parent)
+        , m_queryRunner(new QueryRunner(this)) {
 
         // Initialize database first
         initDatabase();
@@ -496,12 +498,40 @@ public:
 
         setupUI();
 
-        m_pdfDocument = std::make_unique<QPdfDocument>();
-        m_networkManager = new QNetworkAccessManager(this);
+        // QueryRunner now handles all PDF and network operations
 
         connectSignals();
     }
 
+private:
+    // UI Elements - Main
+    QTabWidget *m_mainTabWidget;
+
+    // UI Elements - Input
+    QTabWidget *m_inputTabWidget;
+    QLineEdit *m_filePathEdit;
+    QPushButton *m_browseButton;
+    QPushButton *m_pdfAnalyzeButton;
+
+    QTextEdit *m_pasteTextEdit;
+    QPushButton *m_textAnalyzeButton;
+
+    QPushButton *m_settingsButton;
+    QLabel *m_statusLabel;
+    QLabel *m_spinnerLabel;
+    QTimer *m_spinnerTimer;
+
+    // UI Elements - Results
+    QTabWidget *m_resultsTabWidget;
+    QTextEdit *m_extractedTextEdit;
+    QTextEdit *m_summaryTextEdit;
+    QTextEdit *m_keywordsTextEdit;
+    QTextEdit *m_promptSuggestionsEdit;
+    QTextEdit *m_refinedKeywordsEdit;
+    QPlainTextEdit *m_logTextEdit;
+
+    // Core objects
+    QueryRunner *m_queryRunner;
 
 private:
     void initDatabase() {
@@ -827,6 +857,40 @@ private:
         connect(m_browseButton, &QPushButton::clicked, this, &PDFExtractorGUI::browseForPDF);
         connect(m_pdfAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzePDF);
         connect(m_textAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzeText);
+
+        // Connect QueryRunner signals to UI updates
+        connect(m_queryRunner, &QueryRunner::stageChanged, this, &PDFExtractorGUI::handleStageChanged);
+        connect(m_queryRunner, &QueryRunner::progressMessage, this, &PDFExtractorGUI::log);
+        connect(m_queryRunner, &QueryRunner::errorOccurred, this, &PDFExtractorGUI::handleError);
+
+        // Connect result signals
+        connect(m_queryRunner, &QueryRunner::textExtracted, [this](const QString& text) {
+            m_extractedTextEdit->setPlainText(text);
+            m_resultsTabWidget->setCurrentWidget(m_extractedTextEdit);
+        });
+
+        connect(m_queryRunner, &QueryRunner::summaryGenerated, [this](const QString& summary) {
+            m_summaryTextEdit->setPlainText(summary);
+        });
+
+        connect(m_queryRunner, &QueryRunner::keywordsExtracted, [this](const QString& keywords) {
+            m_keywordsTextEdit->setPlainText(keywords);
+        });
+
+        connect(m_queryRunner, &QueryRunner::promptRefined, [this](const QString& prompt) {
+            m_promptSuggestionsEdit->setPlainText(prompt);
+        });
+
+        connect(m_queryRunner, &QueryRunner::refinedKeywordsExtracted, [this](const QString& keywords) {
+            m_refinedKeywordsEdit->setPlainText(keywords);
+        });
+
+        connect(m_queryRunner, &QueryRunner::processingComplete, [this]() {
+            setUIEnabled(true);
+            stopSpinner();
+            updateStatus("Processing complete");
+            m_resultsTabWidget->setCurrentIndex(1); // Show summary tab
+        });
         connect(m_settingsButton, &QPushButton::clicked, this, &PDFExtractorGUI::openSettings);
     }
 
@@ -838,13 +902,8 @@ private slots:
         if (!fileName.isEmpty()) {
             m_filePathEdit->setText(fileName);
 
-            // Load PDF to get page count
-            if (m_pdfDocument->load(fileName) == QPdfDocument::Error::None) {
-                int pageCount = m_pdfDocument->pageCount();
-                // Page spin controls removed
-
-                logMessage(QString("Loaded PDF: %1 (%2 pages)").arg(fileName).arg(pageCount));
-            }
+            // QueryRunner will handle PDF loading when Analyze is clicked
+            log(QString("PDF selected: %1").arg(fileName));
         }
     }
 
@@ -855,27 +914,21 @@ private slots:
             return;
         }
 
-        setUIEnabled(false);
-        startSpinner();
-        m_statusLabel->setText("Extracting PDF...");
-
-        // Extract text
-        if (!extractPDFText(pdfPath)) {
-            setUIEnabled(true);
-            stopSpinner();
-            m_statusLabel->setText("Extraction failed");
+        if (m_queryRunner->isProcessing()) {
+            QMessageBox::warning(this, "Warning", "Processing already in progress.");
             return;
         }
 
-        m_statusLabel->setText("Analyzing with AI...");
-
-        // Process with AI
-        processWithAI();
-
-        stopSpinner();
-        setUIEnabled(true);
-        m_statusLabel->setText("Complete");
+        setUIEnabled(false);
+        startSpinner();
+        updateStatus("Starting PDF analysis...");
         m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
+
+        // Clear previous results
+        clearResults();
+
+        // Start processing with QueryRunner
+        m_queryRunner->processPDF(pdfPath);
     }
 
     void analyzeText() {
@@ -885,31 +938,85 @@ private slots:
             return;
         }
 
+        if (m_queryRunner->isProcessing()) {
+            QMessageBox::warning(this, "Warning", "Processing already in progress.");
+            return;
+        }
+
         setUIEnabled(false);
         startSpinner();
-        m_statusLabel->setText("Analyzing text with AI...");
-
-        m_extractedText = text;
-        m_extractedTextEdit->setPlainText(text);
-        m_resultsTabWidget->setCurrentIndex(0);
+        updateStatus("Starting text analysis...");
         m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
 
-        processWithAI();
+        // Clear previous results
+        clearResults();
 
-        stopSpinner();
-        setUIEnabled(true);
-        m_statusLabel->setText("Complete");
+        // Start processing with QueryRunner
+        m_queryRunner->processText(text);
     }
 
     void openSettings() {
         SettingsDialog dialog(this);
-        dialog.exec();
+        if (dialog.exec() == QDialog::Accepted) {
+            // Reload settings into QueryRunner
+            m_queryRunner->loadSettingsFromDatabase();
+            log("Settings updated and reloaded");
+        }
     }
 
-private:
-    void logMessage(const QString &msg) {
+    void handleStageChanged(QueryRunner::ProcessingStage stage) {
+        QString stageText;
+        switch (stage) {
+            case QueryRunner::ExtractingText:
+                stageText = "Extracting text...";
+                break;
+            case QueryRunner::GeneratingSummary:
+                stageText = "Generating summary...";
+                break;
+            case QueryRunner::ExtractingKeywords:
+                stageText = "Extracting keywords...";
+                break;
+            case QueryRunner::RefiningPrompt:
+                stageText = "Refining prompt...";
+                break;
+            case QueryRunner::ExtractingRefinedKeywords:
+                stageText = "Extracting refined keywords...";
+                break;
+            case QueryRunner::Complete:
+                stageText = "Complete";
+                break;
+            default:
+                stageText = "Ready";
+                break;
+        }
+        updateStatus(stageText);
+    }
+
+    void handleError(const QString& error) {
+        log("ERROR: " + error);
+        QMessageBox::critical(this, "Error", error);
+        setUIEnabled(true);
+        stopSpinner();
+        updateStatus("Error occurred");
+    }
+
+    void clearResults() {
+        m_extractedTextEdit->clear();
+        m_summaryTextEdit->clear();
+        m_keywordsTextEdit->clear();
+        m_promptSuggestionsEdit->clear();
+        m_refinedKeywordsEdit->clear();
+        m_logTextEdit->clear();
+    }
+
+private:  // Methods
+    void log(const QString &msg) {
         QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
         m_logTextEdit->appendPlainText(QString("[%1] %2").arg(timestamp).arg(msg));
+    }
+
+    void updateStatus(const QString &status) {
+        m_statusLabel->setText(status);
     }
 
     void setUIEnabled(bool enabled) {
@@ -929,6 +1036,7 @@ private:
         m_spinnerTimer->stop();
     }
 
+/* OLD METHODS - Replaced by QueryRunner
     bool extractPDFText(const QString &pdfPath) {
         logMessage("Starting PDF extraction...");
 
@@ -1124,42 +1232,10 @@ private:
 
         return result.trimmed();
     }
-
+*/
 
 private:
-    // UI Elements - Main
-    QTabWidget *m_mainTabWidget;
-
-    // UI Elements - Input
-    QTabWidget *m_inputTabWidget;
-    QLineEdit *m_filePathEdit;
-    QPushButton *m_browseButton;
-    QPushButton *m_pdfAnalyzeButton;
-    // Page range and copyright controls removed
-
-    QTextEdit *m_pasteTextEdit;
-    QPushButton *m_textAnalyzeButton;
-
-    QPushButton *m_settingsButton;
-    QLabel *m_statusLabel;
-    QLabel *m_spinnerLabel;
-    QTimer *m_spinnerTimer;
-
-    // UI Elements - Results
-    QTabWidget *m_resultsTabWidget;
-    QTextEdit *m_extractedTextEdit;
-    QTextEdit *m_summaryTextEdit;
-    QTextEdit *m_keywordsTextEdit;
-    QTextEdit *m_promptSuggestionsEdit;
-    QTextEdit *m_refinedKeywordsEdit;
-    QPlainTextEdit *m_logTextEdit;
-
-    // Core objects
-    std::unique_ptr<QPdfDocument> m_pdfDocument;
-    QNetworkAccessManager *m_networkManager;
-
-    // State
-    QString m_extractedText;
+    // Member variables already declared above
 };
 
 #include "main.moc"
