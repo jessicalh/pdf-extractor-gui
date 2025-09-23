@@ -43,6 +43,9 @@ venv/
 !lmstudio_config.toml
 !lmstudio_config_improved.toml
 
+# LM Studio connectivity tests
+test_lm_studio_connectivity.py
+
 # PDF test files (keep for testing)
 !*.pdf
 

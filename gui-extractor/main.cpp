@@ -51,7 +51,7 @@ const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific informat
 
 const QString DEFAULT_KEYWORD_REFINEMENT_PREPROMPT = "You are an expert scientific information specialist and editorial assistant specializing in keyword optimization for academic research. Your role is to refine and improve keyword lists to ensure they accurately represent research content while maintaining consistency and precision. You help researchers create coherent keyword sets that improve discoverability and accurately categorize their work.\n\nConstraints:\n- Maintain all original specific terms that are accurate\n- Standardize terminology to accepted scientific conventions\n- Ensure keywords are neither too broad nor too narrow\n- Preserve domain-specific technical terms";
 
-const QString DEFAULT_PREPROMPT_REFINEMENT_PROMPT = "Based on the current paper's content and the existing keyword extraction prompt, create an improved prompt that:\n1. Incorporates relevant domain-specific terms from this paper\n2. Maintains ALL the original categorical requirements (organism names, chemicals, proteins, drugs, statistical tests, environments, reactions, algorithms)\n3. Retains the exact sentence structure of the original prompt\n4. Enhances specificity by adding relevant examples from the current text\n5. Preserves the comma-delimited output format\n6. Do not worry about sentence length - include all necessary categories\n\nProvide only the improved prompt text without explanation. If unable to evaluate or improve, return 'Not Evaluated'.\n\nOriginal Prompt:\n{original_prompt}\n\nCurrent Paper Keywords:\n{keywords}\n\nText:\n{text}\n\nImproved Prompt:";
+const QString DEFAULT_PREPROMPT_REFINEMENT_PROMPT = "Based on the current paper's content and the existing keyword extraction prompt, create an improved and effective keyword extraction prompt that:\n1. Incorporates relevant domain-specific terms from this paper\n2. Maintains ALL the original categorical requirements (organism names, chemicals, proteins, drugs, statistical tests, environments, reactions, algorithms)\n3. Retains the exact sentence structure of the original prompt\n4. Enhances specificity by adding relevant examples from the current text\n5. Preserves the comma-delimited output format\n6. Do not worry about sentence length - include all necessary categories\n\nProvide only the improved prompt text without explanation. If unable to evaluate or improve, return 'Not Evaluated'.\n\nOriginal Prompt:\n{original_prompt}\n\nCurrent Paper Keywords:\n{keywords}\n\nText:\n{text}\n\nImproved Prompt:";
 
 // Settings Dialog with SQLite-backed fields
 class SettingsDialog : public QDialog
@@ -121,7 +121,7 @@ private:
         formLayout->addRow(headerLabel);
 
         m_urlEdit = new QLineEdit();
-        m_urlEdit->setPlaceholderText("http://172.20.10.3:8090/v1/chat/completions");
+        m_urlEdit->setPlaceholderText("http://127.0.0.1:8090/v1/chat/completions");
         formLayout->addRow("API URL:", m_urlEdit);
 
         m_modelNameEdit = new QLineEdit();
@@ -132,7 +132,7 @@ private:
         m_overallTimeoutEdit->setRange(10000, 600000);
         m_overallTimeoutEdit->setSingleStep(10000);
         m_overallTimeoutEdit->setSuffix(" ms");
-        m_overallTimeoutEdit->setValue(120000);
+        m_overallTimeoutEdit->setValue(600000);
         formLayout->addRow("Overall Timeout:", m_overallTimeoutEdit);
 
         layout->addLayout(formLayout);
@@ -168,7 +168,7 @@ private:
         m_summaryTimeoutEdit->setRange(10000, 600000);
         m_summaryTimeoutEdit->setSingleStep(10000);
         m_summaryTimeoutEdit->setSuffix(" ms");
-        m_summaryTimeoutEdit->setValue(120000);
+        m_summaryTimeoutEdit->setValue(600000);
         settingsLayout->addWidget(m_summaryTimeoutEdit);
 
         settingsLayout->addStretch();
@@ -224,7 +224,7 @@ private:
         m_keywordTimeoutEdit->setRange(10000, 600000);
         m_keywordTimeoutEdit->setSingleStep(10000);
         m_keywordTimeoutEdit->setSuffix(" ms");
-        m_keywordTimeoutEdit->setValue(60000);
+        m_keywordTimeoutEdit->setValue(600000);
         settingsLayout->addWidget(m_keywordTimeoutEdit);
 
         settingsLayout->addStretch();
@@ -280,7 +280,7 @@ private:
         m_refinementTimeoutEdit->setRange(1000, 600000);
         m_refinementTimeoutEdit->setSingleStep(1000);
         m_refinementTimeoutEdit->setSuffix(" ms");
-        m_refinementTimeoutEdit->setValue(60000);
+        m_refinementTimeoutEdit->setValue(600000);
         settingsLayout->addWidget(m_refinementTimeoutEdit);
         settingsLayout->addStretch();
         layout->addLayout(settingsLayout);
@@ -402,14 +402,14 @@ public:
 
     void restoreDefaults() {
         // Connection defaults
-        m_urlEdit->setText("http://172.20.10.3:8090/v1/chat/completions");
+        m_urlEdit->setText("http://127.0.0.1:8090/v1/chat/completions");
         m_modelNameEdit->setText("gpt-oss-120b");
-        m_overallTimeoutEdit->setValue(120000);
+        m_overallTimeoutEdit->setValue(600000);
 
         // Summary defaults (optimized for gpt-oss-120b)
         m_summaryTempEdit->setValue(0.7);  // Lower temperature for more deterministic summaries
         m_summaryContextEdit->setValue(16000);  // Increased context for better comprehension
-        m_summaryTimeoutEdit->setValue(120000);
+        m_summaryTimeoutEdit->setValue(600000);
         m_summaryPrepromptEdit->setPlainText("You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'");
         m_summaryPromptEdit->setPlainText("Please provide a summary:\n"
                                          "1. Main research question or hypothesis\n"
@@ -423,7 +423,7 @@ public:
         // Keyword defaults (optimized for gpt-oss-120b)
         m_keywordTempEdit->setValue(0.3);  // Very low temperature for precise extraction
         m_keywordContextEdit->setValue(8000);  // Increased for better context understanding
-        m_keywordTimeoutEdit->setValue(60000);
+        m_keywordTimeoutEdit->setValue(600000);
         m_keywordPrepromptEdit->setPlainText(DEFAULT_KEYWORD_PREPROMPT);
         m_keywordPromptEdit->setPlainText("Extract and return a comma-delimited list containing: "
                                          "organism names (species, genus), "
@@ -439,7 +439,7 @@ public:
         // Refinement defaults (optimized for gpt-oss-120b)
         m_refinementTempEdit->setValue(0.8);  // Default temperature for refinement
         m_refinementContextEdit->setValue(8000);
-        m_refinementTimeoutEdit->setValue(60000);
+        m_refinementTimeoutEdit->setValue(600000);
         m_keywordRefinementPrepromptEdit->setPlainText(DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
         m_prepromptRefinementPromptEdit->setPlainText(DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
     }
@@ -480,10 +480,13 @@ class PDFExtractorGUI : public QMainWindow
 public:
     PDFExtractorGUI(QWidget *parent = nullptr)
         : QMainWindow(parent)
-        , m_queryRunner(new QueryRunner(this)) {
+        , m_queryRunner(nullptr) {
 
-        // Initialize database first
+        // Initialize database BEFORE creating QueryRunner
         initDatabase();
+
+        // Now create QueryRunner after database is ready
+        m_queryRunner = new QueryRunner(this);
 
         setWindowTitle("PDF Extractor GUI v3.0 - AI Analysis");
         resize(1200, 800);
@@ -612,14 +615,14 @@ private:
             )";
 
             query.prepare(insertDefaults);
-            query.bindValue(":url", "http://172.20.10.3:8090/v1/chat/completions");
+            query.bindValue(":url", "http://127.0.0.1:8090/v1/chat/completions");
             query.bindValue(":model_name", "gpt-oss-120b");
-            query.bindValue(":overall_timeout", "120000");
+            query.bindValue(":overall_timeout", "600000");
 
             // Summary settings (optimized for gpt-oss-120b)
             query.bindValue(":summary_temperature", "0.7");
             query.bindValue(":summary_context_length", "16000");
-            query.bindValue(":summary_timeout", "120000");
+            query.bindValue(":summary_timeout", "600000");
             query.bindValue(":summary_preprompt", "You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'");
             query.bindValue(":summary_prompt", "Please provide a summary:\n"
                           "1. Main research question or hypothesis\n"
@@ -633,7 +636,7 @@ private:
             // Keyword settings (optimized for gpt-oss-120b)
             query.bindValue(":keyword_temperature", "0.3");
             query.bindValue(":keyword_context_length", "8000");
-            query.bindValue(":keyword_timeout", "60000");
+            query.bindValue(":keyword_timeout", "600000");
             query.bindValue(":keyword_preprompt", DEFAULT_KEYWORD_PREPROMPT);
             query.bindValue(":keyword_prompt", "Extract and return a comma-delimited list containing: "
                           "organism names (species, genus), "
@@ -649,7 +652,7 @@ private:
             // Refinement settings (optimized for gpt-oss-120b)
             query.bindValue(":refinement_temperature", "0.8");
             query.bindValue(":refinement_context_length", "8000");
-            query.bindValue(":refinement_timeout", "60000");
+            query.bindValue(":refinement_timeout", "600000");
             query.bindValue(":keyword_refinement_preprompt", DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
             query.bindValue(":preprompt_refinement_prompt", DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
 

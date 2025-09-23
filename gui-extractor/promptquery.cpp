@@ -2,6 +2,9 @@
 #include <QNetworkRequest>
 #include <QUrl>
 #include <QDebug>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
 
 // ===== BASE CLASS IMPLEMENTATION =====
 
@@ -79,6 +82,27 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("User-Agent", "PDFExtractor/1.0");
 
+    // Log the request summary (not full prompt to UI)
+    emit progressUpdate(QString("=== %1 REQUEST SENT ===").arg(getQueryType().toUpper()));
+    emit progressUpdate(QString("Model: %1, Temp: %2, Max Tokens: %3")
+                       .arg(m_modelName).arg(m_temperature).arg(m_contextLength));
+
+    // Write to lastrun.log
+    QFile logFile("lastrun.log");
+    if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&logFile);
+        stream << "\n=== " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+               << " - " << getQueryType() << " ===\n";
+        stream << "URL: " << m_url << "\n";
+        stream << "Model: " << m_modelName << "\n";
+        stream << "Temperature: " << m_temperature << "\n";
+        stream << "Max Tokens: " << m_contextLength << "\n";
+        stream << "--- Full Prompt ---\n";
+        stream << fullPrompt << "\n";
+        stream << "--- End Prompt ---\n";
+        logFile.close();
+    }
+
     emit progressUpdate("Sending request to LM Studio...");
 
     m_currentReply = m_networkManager->post(request, requestData);
@@ -121,10 +145,77 @@ void PromptQuery::handleNetworkReply() {
         return;
     }
 
-    QString content = choices[0].toObject()["message"].toObject()["content"].toString();
+    // Safely extract content and reasoning fields
+    QString content;
+    QString reasoning;
+
+    if (!choices[0].isObject()) {
+        emit errorOccurred("Invalid response structure: choices[0] is not an object");
+        return;
+    }
+
+    QJsonObject choice = choices[0].toObject();
+    if (choice.contains("message") && choice["message"].isObject()) {
+        QJsonObject message = choice["message"].toObject();
+
+        // Extract content field
+        if (message.contains("content") && message["content"].isString()) {
+            content = message["content"].toString();
+        } else {
+            emit progressUpdate("Warning: No content field in response");
+        }
+
+        // Extract reasoning field (this is where gpt-oss puts its reasoning)
+        if (message.contains("reasoning") && message["reasoning"].isString()) {
+            reasoning = message["reasoning"].toString();
+        }
+    } else {
+        emit errorOccurred("Invalid response structure: no message object");
+        return;
+    }
+
+    // Log the response to UI (simplified)
+    emit progressUpdate(QString("=== %1 RESPONSE RECEIVED ===").arg(getQueryType().toUpper()));
+
+    // Only show reasoning to user, not the full content
+    if (!reasoning.isEmpty()) {
+        emit progressUpdate("--- Model Reasoning ---");
+        emit progressUpdate(reasoning);
+        emit progressUpdate("--- End Reasoning ---");
+    } else {
+        emit progressUpdate("(No reasoning provided by model)");
+    }
+
+    // Show abbreviated content preview
+    if (!content.isEmpty()) {
+        QString preview = content.left(100);
+        if (content.length() > 100) preview += "...";
+        emit progressUpdate(QString("Content preview: %1").arg(preview));
+    }
+
+    // Write full response to lastrun.log (both content and reasoning)
+    QFile logFile("lastrun.log");
+    if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&logFile);
+        stream << "--- Response Content ---\n";
+        stream << content << "\n";
+        stream << "--- End Content ---\n";
+        if (!reasoning.isEmpty()) {
+            stream << "--- Response Reasoning ---\n";
+            stream << reasoning << "\n";
+            stream << "--- End Reasoning ---\n";
+        }
+        logFile.close();
+    }
 
     emit progressUpdate("Processing response...");
-    processResponse(content);
+
+    // Process with the content field (not reasoning)
+    if (!content.isEmpty()) {
+        processResponse(content);
+    } else {
+        emit errorOccurred("No content in response to process");
+    }
 }
 
 void PromptQuery::handleTimeout() {
@@ -278,7 +369,13 @@ KeywordsWithRefinementQuery::KeywordsWithRefinementQuery(QObject *parent)
 
 void KeywordsWithRefinementQuery::setRefinedPrompt(const QString& refinedPrompt) {
     // Override the base prompt with the refined version
-    m_prompt = refinedPrompt;
+    // Make sure the refined prompt has {text} placeholder, if not add it
+    if (!refinedPrompt.contains("{text}")) {
+        // Append the text placeholder if missing
+        m_prompt = refinedPrompt + "\n\nText:\n{text}";
+    } else {
+        m_prompt = refinedPrompt;
+    }
 }
 
 QString KeywordsWithRefinementQuery::getQueryType() const {

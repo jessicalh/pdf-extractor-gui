@@ -3,6 +3,9 @@
 #include <QSqlError>
 #include <QRegularExpression>
 #include <QDebug>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
 
 QueryRunner::QueryRunner(QObject *parent)
     : QObject(parent)
@@ -175,6 +178,17 @@ QString QueryRunner::removeCopyrightNotices(const QString& text) {
 }
 
 void QueryRunner::startPipeline(const QString& text, InputType type) {
+    // Clear the lastrun.log file at the start of each run
+    QFile logFile("lastrun.log");
+    if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QTextStream stream(&logFile);
+        stream << "=== PDF EXTRACTOR RUN LOG ===" << Qt::endl;
+        stream << "Started: " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << Qt::endl;
+        stream << "Input Type: " << (type == PDFFile ? "PDF File" : "Pasted Text") << Qt::endl;
+        stream << Qt::endl;
+        logFile.close();
+    }
+
     // Clean up the text
     m_cleanedText = cleanupText(text, type);
 
@@ -192,6 +206,7 @@ void QueryRunner::startPipeline(const QString& text, InputType type) {
 void QueryRunner::runSummaryExtraction() {
     m_currentStage = GeneratingSummary;
     emit stageChanged(m_currentStage);
+    emit progressMessage("=== STAGE 1: Running Summary Extraction ===");
 
     m_summaryQuery->setConnectionSettings(m_settings.url, m_settings.modelName);
     m_summaryQuery->setPromptSettings(m_settings.summaryTemp,
@@ -206,6 +221,7 @@ void QueryRunner::runSummaryExtraction() {
 void QueryRunner::runKeywordExtraction() {
     m_currentStage = ExtractingKeywords;
     emit stageChanged(m_currentStage);
+    emit progressMessage("=== STAGE 2: Running Keyword Extraction ===");
 
     m_keywordsQuery->setConnectionSettings(m_settings.url, m_settings.modelName);
     m_keywordsQuery->setPromptSettings(m_settings.keywordTemp,
@@ -220,6 +236,7 @@ void QueryRunner::runKeywordExtraction() {
 void QueryRunner::runPromptRefinement() {
     m_currentStage = RefiningPrompt;
     emit stageChanged(m_currentStage);
+    emit progressMessage("=== STAGE 3: Running Prompt Refinement ===");
 
     m_refineQuery->setConnectionSettings(m_settings.url, m_settings.modelName);
     m_refineQuery->setPromptSettings(m_settings.refinementTemp,
@@ -236,6 +253,14 @@ void QueryRunner::runPromptRefinement() {
 void QueryRunner::runRefinedKeywordExtraction() {
     m_currentStage = ExtractingRefinedKeywords;
     emit stageChanged(m_currentStage);
+    emit progressMessage("=== STAGE 4: Running Refined Keyword Extraction ===");
+
+    if (m_suggestedPrompt.isEmpty()) {
+        emit progressMessage("ERROR: Suggested prompt is empty! Using original keyword prompt.");
+        m_suggestedPrompt = m_settings.keywordPrompt;
+    }
+
+    emit progressMessage(QString("Using refined prompt (first 200 chars): %1").arg(m_suggestedPrompt.left(200)));
 
     m_refinedKeywordsQuery->setConnectionSettings(m_settings.url, m_settings.modelName);
     m_refinedKeywordsQuery->setPromptSettings(m_settings.keywordTemp,
@@ -244,12 +269,27 @@ void QueryRunner::runRefinedKeywordExtraction() {
     m_refinedKeywordsQuery->setPreprompt(m_settings.keywordPreprompt);
     m_refinedKeywordsQuery->setRefinedPrompt(m_suggestedPrompt);
 
+    emit progressMessage("About to execute refined keywords query...");
     m_refinedKeywordsQuery->execute(m_cleanedText);
+    emit progressMessage("Refined keywords query execute() called");
 }
 
 void QueryRunner::handleSummaryResult(const QString& result) {
     m_summary = result;
     emit summaryGenerated(m_summary);
+
+    // If summary failed or returned empty, stop processing
+    if (m_summary.isEmpty() ||
+        m_summary.compare("Not Evaluated", Qt::CaseInsensitive) == 0) {
+        emit progressMessage("Summary not successful - ending process");
+        m_currentStage = Complete;
+        emit stageChanged(m_currentStage);
+        emit processingComplete();
+        emit progressMessage("Processing ended due to summary failure");
+        m_currentStage = Idle;
+        return;
+    }
+
     advanceToNextStage();
 }
 
@@ -261,12 +301,29 @@ void QueryRunner::handleKeywordsResult(const QString& result) {
 
 void QueryRunner::handleRefinementResult(const QString& result) {
     m_suggestedPrompt = result;
+    emit progressMessage(QString("Refinement result (first 100 chars): %1").arg(result.left(100)));
     emit promptRefined(m_suggestedPrompt);
+
+    // If refinement failed or returned empty, we're done
+    if (m_suggestedPrompt.isEmpty() ||
+        m_suggestedPrompt.compare("Not Evaluated", Qt::CaseInsensitive) == 0) {
+        emit progressMessage("Refinement not successful - completing process");
+        m_currentStage = Complete;
+        emit stageChanged(m_currentStage);
+        emit processingComplete();
+        emit progressMessage("All processing complete");
+        m_currentStage = Idle;
+        return;
+    }
+
+    emit progressMessage(QString("Current stage before advance: %1").arg(m_currentStage));
     advanceToNextStage();
+    emit progressMessage(QString("Current stage after advance: %1").arg(m_currentStage));
 }
 
 void QueryRunner::handleRefinedKeywordsResult(const QString& result) {
     m_refinedKeywords = result;
+    emit progressMessage(QString("Refined keywords result (first 100 chars): %1").arg(result.left(100)));
     emit refinedKeywordsExtracted(m_refinedKeywords);
     advanceToNextStage();
 }

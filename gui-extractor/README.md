@@ -76,7 +76,7 @@ Arguments:
 ## Configuration
 
 The application uses `lmstudio_config.toml` for AI settings:
-- LM Studio endpoint: `172.20.10.3:8090`
+- LM Studio endpoint: `127.0.0.1:8090`
 - Model: `gpt-oss-120b`
 - Temperature: `0.8`
 - Max tokens: `8000`
@@ -141,7 +141,7 @@ release\pdfextractor_gui.exe paper.pdf output.txt --gui
 ## Troubleshooting
 
 1. **Missing DLL Error**: All required DLLs are in the release folder
-2. **AI Features Not Working**: Check LM Studio is running at `172.20.10.3:8090`
+2. **AI Features Not Working**: Check LM Studio is running at `127.0.0.1:8090`
 3. **PDF Load Error**: Ensure PDF is not password protected or corrupted
 4. **No Keywords Generated**: Some papers may not contain scientific terms
 
