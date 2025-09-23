@@ -1,10 +1,12 @@
-QT += core gui widgets pdf network
+QT += core gui widgets pdf network sql
 CONFIG += c++17
 
 TARGET = pdfextractor_gui
 
-SOURCES += main.cpp
-HEADERS += tomlparser.h
+SOURCES += main.cpp \
+    promptquery.cpp
+
+HEADERS += promptquery.h
 
 # Windows specific - ensure console app for debugging
 win32 {
