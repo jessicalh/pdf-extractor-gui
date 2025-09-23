@@ -44,14 +44,80 @@
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QDir>
+#include <QClipboard>
+#include <QStyle>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QSet>
 #include "queryrunner.h"
 
 // Default prompts for keyword refinement (new fields)
-const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research";
+const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- List each keyword only once (no duplicates)\n- Never create permutations or variations of existing words\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research\n- Return ONLY a comma-delimited list, nothing else\n- If no keywords are found, return nothing\n- Do not include explanations or additional text\n- Ensure the keyword list is sensible and relevant";
 
 const QString DEFAULT_KEYWORD_REFINEMENT_PREPROMPT = "You are an expert scientific information specialist and editorial assistant specializing in keyword optimization for academic research. Your role is to refine and improve keyword lists to ensure they accurately represent research content while maintaining consistency and precision. You help researchers create coherent keyword sets that improve discoverability and accurately categorize their work.\n\nConstraints:\n- Maintain all original specific terms that are accurate\n- Standardize terminology to accepted scientific conventions\n- Ensure keywords are neither too broad nor too narrow\n- Preserve domain-specific technical terms";
 
 const QString DEFAULT_PREPROMPT_REFINEMENT_PROMPT = "Based on the current paper's content and the existing keyword extraction prompt, create an improved and effective keyword extraction prompt that:\n1. Incorporates relevant domain-specific terms from this paper\n2. Maintains ALL the original categorical requirements (organism names, chemicals, proteins, drugs, statistical tests, environments, reactions, algorithms)\n3. Retains the exact sentence structure of the original prompt\n4. Enhances specificity by adding relevant examples from the current text\n5. Preserves the comma-delimited output format\n6. Do not worry about sentence length - include all necessary categories\n\nProvide only the improved prompt text without explanation. If unable to evaluate or improve, return 'Not Evaluated'.\n\nOriginal Prompt:\n{original_prompt}\n\nCurrent Paper Keywords:\n{keywords}\n\nText:\n{text}\n\nImproved Prompt:";
+
+// Keyword Selection Dialog
+class KeywordSelectionDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    KeywordSelectionDialog(const QStringList &keywords, QWidget *parent = nullptr) : QDialog(parent) {
+        setWindowTitle("Select Keywords");
+        setModal(true);
+        resize(400, 500);
+
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(10, 10, 10, 10);
+
+        // Create list widget with checkboxes
+        m_listWidget = new QListWidget();
+
+        // Add keywords as checkable items
+        for (const QString &keyword : keywords) {
+            auto *item = new QListWidgetItem(keyword);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(Qt::Checked);  // Initially all checked
+            m_listWidget->addItem(item);
+        }
+
+        layout->addWidget(m_listWidget);
+
+        // Create buttons
+        auto *buttonLayout = new QHBoxLayout();
+        buttonLayout->addStretch();
+
+        auto *copyButton = new QPushButton("Copy");
+        auto *cancelButton = new QPushButton("Cancel");
+
+        // Match button sizes to app style
+        copyButton->setFixedWidth(75);
+        cancelButton->setFixedWidth(75);
+
+        connect(copyButton, &QPushButton::clicked, this, &KeywordSelectionDialog::accept);
+        connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+
+        buttonLayout->addWidget(copyButton);
+        buttonLayout->addWidget(cancelButton);
+
+        layout->addLayout(buttonLayout);
+    }
+
+    QStringList getSelectedKeywords() const {
+        QStringList selected;
+        for (int i = 0; i < m_listWidget->count(); ++i) {
+            QListWidgetItem *item = m_listWidget->item(i);
+            if (item->checkState() == Qt::Checked) {
+                selected.append(item->text());
+            }
+        }
+        return selected;
+    }
+
+private:
+    QListWidget *m_listWidget;
+};
 
 // Settings Dialog with SQLite-backed fields
 class SettingsDialog : public QDialog
@@ -160,7 +226,7 @@ private:
         m_summaryContextEdit->setRange(1000, 100000);
         m_summaryContextEdit->setSingleStep(1000);
         m_summaryContextEdit->setSuffix(" tokens");
-        m_summaryContextEdit->setValue(8000);
+        m_summaryContextEdit->setValue(16000);
         settingsLayout->addWidget(m_summaryContextEdit);
 
         settingsLayout->addWidget(new QLabel("Timeout:"));
@@ -272,7 +338,7 @@ private:
         m_refinementContextEdit->setRange(1000, 100000);
         m_refinementContextEdit->setSingleStep(1000);
         m_refinementContextEdit->setSuffix(" tokens");
-        m_refinementContextEdit->setValue(8000);
+        m_refinementContextEdit->setValue(16000);
         settingsLayout->addWidget(m_refinementContextEdit);
 
         settingsLayout->addWidget(new QLabel("Timeout:"));
@@ -422,7 +488,7 @@ public:
 
         // Keyword defaults (optimized for gpt-oss-120b)
         m_keywordTempEdit->setValue(0.3);  // Very low temperature for precise extraction
-        m_keywordContextEdit->setValue(8000);  // Increased for better context understanding
+        m_keywordContextEdit->setValue(16000);  // Standardized context length
         m_keywordTimeoutEdit->setValue(600000);
         m_keywordPrepromptEdit->setPlainText(DEFAULT_KEYWORD_PREPROMPT);
         m_keywordPromptEdit->setPlainText("Extract and return a comma-delimited list containing: "
@@ -433,12 +499,19 @@ public:
                                          "chemical reactions (reaction types, mechanisms), "
                                          "computational methods (algorithms, models, software tools), "
                                          "and research techniques (experimental methods, instruments).\n\n"
-                                         "Format: Return only the shortest complete scientific form of each term, separated by commas. Do not include explanations, titles, or suffixes. If unable to extract relevant keywords from the text, return 'Not Evaluated'.\n\n"
+                                         "Rules:\n"
+                                         "- Return ONLY a comma-delimited list, no other text\n"
+                                         "- List each keyword only once (no duplicates)\n"
+                                         "- Never create permutations or variations of words\n"
+                                         "- Use the shortest complete scientific form\n"
+                                         "- No explanations, titles, suffixes, or commentary\n"
+                                         "- If no relevant keywords found, return 'Not Evaluated'\n"
+                                         "- Ensure keywords are sensible and actually present in the text\n\n"
                                          "Text:\n{text}");
 
         // Refinement defaults (optimized for gpt-oss-120b)
         m_refinementTempEdit->setValue(0.8);  // Default temperature for refinement
-        m_refinementContextEdit->setValue(8000);
+        m_refinementContextEdit->setValue(16000);
         m_refinementTimeoutEdit->setValue(600000);
         m_keywordRefinementPrepromptEdit->setPlainText(DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
         m_prepromptRefinementPromptEdit->setPlainText(DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
@@ -532,6 +605,11 @@ private:
     QTextEdit *m_promptSuggestionsEdit;
     QTextEdit *m_refinedKeywordsEdit;
     QPlainTextEdit *m_logTextEdit;
+
+    // Copy buttons for output tabs
+    QPushButton *m_copyExtractedButton;
+    QPushButton *m_copySummaryButton;
+    QPushButton *m_copyKeywordsButton;
 
     // Core objects
     QueryRunner *m_queryRunner;
@@ -635,7 +713,7 @@ private:
 
             // Keyword settings (optimized for gpt-oss-120b)
             query.bindValue(":keyword_temperature", "0.3");
-            query.bindValue(":keyword_context_length", "8000");
+            query.bindValue(":keyword_context_length", "16000");
             query.bindValue(":keyword_timeout", "600000");
             query.bindValue(":keyword_preprompt", DEFAULT_KEYWORD_PREPROMPT);
             query.bindValue(":keyword_prompt", "Extract and return a comma-delimited list containing: "
@@ -646,12 +724,19 @@ private:
                           "chemical reactions (reaction types, mechanisms), "
                           "computational methods (algorithms, models, software tools), "
                           "and research techniques (experimental methods, instruments).\n\n"
-                          "Format: Return only the shortest complete scientific form of each term, separated by commas. Do not include explanations, titles, or suffixes. If unable to extract relevant keywords from the text, return 'Not Evaluated'.\n\n"
+                          "Rules:\n"
+                          "- Return ONLY a comma-delimited list, no other text\n"
+                          "- List each keyword only once (no duplicates)\n"
+                          "- Never create permutations or variations of words\n"
+                          "- Use the shortest complete scientific form\n"
+                          "- No explanations, titles, suffixes, or commentary\n"
+                          "- If no relevant keywords found, return 'Not Evaluated'\n"
+                          "- Ensure keywords are sensible and actually present in the text\n\n"
                           "Text:\n{text}");
 
             // Refinement settings (optimized for gpt-oss-120b)
             query.bindValue(":refinement_temperature", "0.8");
-            query.bindValue(":refinement_context_length", "8000");
+            query.bindValue(":refinement_context_length", "16000");
             query.bindValue(":refinement_timeout", "600000");
             query.bindValue(":keyword_refinement_preprompt", DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
             query.bindValue(":preprompt_refinement_prompt", DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
@@ -764,19 +849,84 @@ private:
 
         m_resultsTabWidget = new QTabWidget();
 
+        // Extracted Text tab with copy button
+        auto *extractedWidget = new QWidget();
+        auto *extractedLayout = new QHBoxLayout(extractedWidget);
+        extractedLayout->setContentsMargins(0, 0, 0, 0);
+        extractedLayout->setSpacing(0);
+
         m_extractedTextEdit = new QTextEdit();
         m_extractedTextEdit->setReadOnly(true);
         m_extractedTextEdit->setStyleSheet("QTextEdit { font-family: 'Consolas', monospace; }");
-        m_resultsTabWidget->addTab(m_extractedTextEdit, "Extracted Text");
+        extractedLayout->addWidget(m_extractedTextEdit);
+
+        // Vertical separator line
+        auto *extractedSeparator = new QFrame();
+        extractedSeparator->setFrameShape(QFrame::VLine);
+        extractedSeparator->setFrameShadow(QFrame::Sunken);
+        extractedLayout->addWidget(extractedSeparator);
+
+        // Right column for copy button
+        auto *extractedButtonColumn = new QWidget();
+        extractedButtonColumn->setFixedWidth(40);
+        auto *extractedButtonLayout = new QVBoxLayout(extractedButtonColumn);
+        extractedButtonLayout->setContentsMargins(5, 5, 5, 5);
+        extractedButtonLayout->setAlignment(Qt::AlignTop);
+
+        m_copyExtractedButton = new QPushButton();
+        m_copyExtractedButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+        m_copyExtractedButton->setToolTip("Copy to clipboard");
+        m_copyExtractedButton->setFixedSize(30, 30);
+        extractedButtonLayout->addWidget(m_copyExtractedButton);
+        extractedButtonLayout->addStretch();
+
+        extractedLayout->addWidget(extractedButtonColumn);
+        m_resultsTabWidget->addTab(extractedWidget, "Extracted Text");
+
+        // Summary Result tab with copy button
+        auto *summaryWidget = new QWidget();
+        auto *summaryLayout = new QHBoxLayout(summaryWidget);
+        summaryLayout->setContentsMargins(0, 0, 0, 0);
+        summaryLayout->setSpacing(0);
 
         m_summaryTextEdit = new QTextEdit();
         m_summaryTextEdit->setReadOnly(true);
         m_summaryTextEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 14px; line-height: 1.6; }");
-        m_resultsTabWidget->addTab(m_summaryTextEdit, "Summary Result");
+        summaryLayout->addWidget(m_summaryTextEdit);
 
-        // Keywords tab with three sections
+        // Vertical separator line
+        auto *summarySeparator = new QFrame();
+        summarySeparator->setFrameShape(QFrame::VLine);
+        summarySeparator->setFrameShadow(QFrame::Sunken);
+        summaryLayout->addWidget(summarySeparator);
+
+        // Right column for copy button
+        auto *summaryButtonColumn = new QWidget();
+        summaryButtonColumn->setFixedWidth(40);
+        auto *summaryButtonLayout = new QVBoxLayout(summaryButtonColumn);
+        summaryButtonLayout->setContentsMargins(5, 5, 5, 5);
+        summaryButtonLayout->setAlignment(Qt::AlignTop);
+
+        m_copySummaryButton = new QPushButton();
+        m_copySummaryButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+        m_copySummaryButton->setToolTip("Copy to clipboard");
+        m_copySummaryButton->setFixedSize(30, 30);
+        summaryButtonLayout->addWidget(m_copySummaryButton);
+        summaryButtonLayout->addStretch();
+
+        summaryLayout->addWidget(summaryButtonColumn);
+        m_resultsTabWidget->addTab(summaryWidget, "Summary Result");
+
+        // Keywords tab with three sections and copy button
         auto *keywordsWidget = new QWidget();
-        auto *keywordsLayout = new QVBoxLayout(keywordsWidget);
+        auto *keywordsMainLayout = new QHBoxLayout(keywordsWidget);
+        keywordsMainLayout->setContentsMargins(0, 0, 0, 0);
+        keywordsMainLayout->setSpacing(0);
+
+        // Left side with the keyword sections
+        auto *keywordsContentWidget = new QWidget();
+        auto *keywordsLayout = new QVBoxLayout(keywordsContentWidget);
+        keywordsMainLayout->addWidget(keywordsContentWidget);
 
         auto *keywordsSplitter = new QSplitter(Qt::Vertical);
 
@@ -810,6 +960,27 @@ private:
         keywordsSplitter->setSizes({100, 100, 100}); // Equal sizes
         keywordsLayout->addWidget(keywordsSplitter);
 
+        // Vertical separator line
+        auto *keywordsSeparator = new QFrame();
+        keywordsSeparator->setFrameShape(QFrame::VLine);
+        keywordsSeparator->setFrameShadow(QFrame::Sunken);
+        keywordsMainLayout->addWidget(keywordsSeparator);
+
+        // Right column for copy button
+        auto *keywordsButtonColumn = new QWidget();
+        keywordsButtonColumn->setFixedWidth(40);
+        auto *keywordsButtonLayout = new QVBoxLayout(keywordsButtonColumn);
+        keywordsButtonLayout->setContentsMargins(5, 5, 5, 5);
+        keywordsButtonLayout->setAlignment(Qt::AlignTop);
+
+        m_copyKeywordsButton = new QPushButton();
+        m_copyKeywordsButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+        m_copyKeywordsButton->setToolTip("Copy to clipboard");
+        m_copyKeywordsButton->setFixedSize(30, 30);
+        keywordsButtonLayout->addWidget(m_copyKeywordsButton);
+        keywordsButtonLayout->addStretch();
+
+        keywordsMainLayout->addWidget(keywordsButtonColumn);
         m_resultsTabWidget->addTab(keywordsWidget, "Keywords Result");
 
         m_logTextEdit = new QPlainTextEdit();
@@ -895,6 +1066,91 @@ private:
             m_resultsTabWidget->setCurrentIndex(1); // Show summary tab
         });
         connect(m_settingsButton, &QPushButton::clicked, this, &PDFExtractorGUI::openSettings);
+
+        // Connect copy buttons
+        connect(m_copyExtractedButton, &QPushButton::clicked, [this]() {
+            QString text = m_extractedTextEdit->toPlainText();
+            if (text.isEmpty()) {
+                updateStatus("No extracted text to copy");
+                return;
+            }
+            QClipboard *clipboard = QApplication::clipboard();
+            clipboard->setText(text);
+            updateStatus("Extracted text copied to clipboard");
+        });
+
+        connect(m_copySummaryButton, &QPushButton::clicked, [this]() {
+            QString summary = m_summaryTextEdit->toPlainText();
+            if (summary.isEmpty()) {
+                updateStatus("No summary to copy");
+                return;
+            }
+            QClipboard *clipboard = QApplication::clipboard();
+            clipboard->setText(summary);
+            updateStatus("Summary copied to clipboard");
+        });
+
+        connect(m_copyKeywordsButton, &QPushButton::clicked, [this]() {
+            // Collect all unique keywords from both fields
+            QSet<QString> uniqueKeywords;
+
+            // Process original keywords
+            QString originalText = m_keywordsTextEdit->toPlainText();
+            if (!originalText.isEmpty()) {
+                // Split by comma and clean each keyword
+                QStringList originalList = originalText.split(',', Qt::SkipEmptyParts);
+                for (QString keyword : originalList) {
+                    keyword = keyword.trimmed();
+                    // Remove any newlines within keywords
+                    keyword.replace('\n', ' ');
+                    keyword = keyword.simplified();
+                    if (!keyword.isEmpty()) {
+                        uniqueKeywords.insert(keyword);
+                    }
+                }
+            }
+
+            // Process refined keywords (Keywords with Suggestions)
+            QString refinedText = m_refinedKeywordsEdit->toPlainText();
+            if (!refinedText.isEmpty()) {
+                // Split by comma and clean each keyword
+                QStringList refinedList = refinedText.split(',', Qt::SkipEmptyParts);
+                for (QString keyword : refinedList) {
+                    keyword = keyword.trimmed();
+                    // Remove any newlines within keywords
+                    keyword.replace('\n', ' ');
+                    keyword = keyword.simplified();
+                    if (!keyword.isEmpty()) {
+                        uniqueKeywords.insert(keyword);
+                    }
+                }
+            }
+
+            // Check if we have any keywords
+            if (uniqueKeywords.isEmpty()) {
+                updateStatus("No keywords to copy");
+                return;
+            }
+
+            // Convert to sorted list for consistent display
+            QStringList keywordList = uniqueKeywords.values();
+            keywordList.sort(Qt::CaseInsensitive);
+
+            // Show selection dialog
+            KeywordSelectionDialog dialog(keywordList, this);
+            if (dialog.exec() == QDialog::Accepted) {
+                QStringList selectedKeywords = dialog.getSelectedKeywords();
+                if (!selectedKeywords.isEmpty()) {
+                    // Join with newlines for Zotero
+                    QString clipboardText = selectedKeywords.join('\n');
+                    QClipboard *clipboard = QApplication::clipboard();
+                    clipboard->setText(clipboardText);
+                    updateStatus(QString("Copied %1 keywords to clipboard").arg(selectedKeywords.size()));
+                } else {
+                    updateStatus("No keywords selected");
+                }
+            }
+        });
     }
 
 private slots:
