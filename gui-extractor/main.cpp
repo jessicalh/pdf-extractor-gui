@@ -143,7 +143,7 @@ struct DefaultSettings {
     static constexpr int SUMMARY_TIMEOUT = 900000;  // 15 minutes
 
     // Keyword defaults
-    static constexpr double KEYWORD_TEMPERATURE = 0.3;  // Very low temperature for precise extraction
+    static constexpr double KEYWORD_TEMPERATURE = 0.6;  // Minimum 0.6 to avoid weird outputs
     static constexpr int KEYWORD_CONTEXT_LENGTH = 16000;  // 16k context
     static constexpr int KEYWORD_TIMEOUT = 900000;  // 15 minutes
 

@@ -51,7 +51,11 @@ QueryRunner::QueryRunner(QObject *parent)
 }
 
 QueryRunner::~QueryRunner() {
-    // Cleanup handled by QObject parent-child relationships
+    // Ensure PDF document is closed before destruction
+    if (m_pdfDocument) {
+        m_pdfDocument->close();
+    }
+    // Other cleanup handled by QObject parent-child relationships
 }
 
 void QueryRunner::processPDF(const QString& filePath) {
@@ -68,6 +72,8 @@ void QueryRunner::processPDF(const QString& filePath) {
     QString extractedText = extractTextFromPDF(filePath);
 
     if (extractedText.isEmpty()) {
+        // Ensure PDF is closed on error (though extractTextFromPDF should have already closed it)
+        m_pdfDocument->close();
         m_currentStage = Idle;
         emit stageChanged(m_currentStage);
         emit errorOccurred("Failed to extract text from PDF");
@@ -103,10 +109,14 @@ void QueryRunner::processText(const QString& text) {
 }
 
 QString QueryRunner::extractTextFromPDF(const QString& filePath) {
+    // Close any previously open document first
+    m_pdfDocument->close();
+
     QPdfDocument::Error error = m_pdfDocument->load(filePath);
 
     if (error != QPdfDocument::Error::None) {
         emit errorOccurred("Failed to load PDF: " + QString::number(static_cast<int>(error)));
+        // No need to close here as load() failed
         return QString();
     }
 
@@ -122,6 +132,10 @@ QString QueryRunner::extractTextFromPDF(const QString& filePath) {
         emit progressMessage(QString("Extracting page %1 of %2 (%3%)...")
                            .arg(i + 1).arg(pageCount).arg(progress));
     }
+
+    // Close the document immediately after extraction is complete
+    m_pdfDocument->close();
+    emit progressMessage("PDF file closed");
 
     return extractedText;
 }
@@ -196,6 +210,10 @@ void QueryRunner::startPipeline(const QString& text, InputType type) {
     m_cleanedText = cleanupText(text, type);
 
     if (m_cleanedText.isEmpty()) {
+        // Ensure PDF is closed if we're processing a PDF
+        if (type == PDFFile) {
+            m_pdfDocument->close();
+        }
         m_currentStage = Idle;
         emit stageChanged(m_currentStage);
         emit errorOccurred("No text remaining after cleanup");
