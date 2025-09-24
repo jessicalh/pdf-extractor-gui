@@ -13,16 +13,50 @@
 #   make clean        : Clean all builds
 #   make help         : Show this help
 
-# Environment-specific paths (adjust for your system)
-# These are the only lines that need to change for different build environments
-QT_VERSION = 6.10.0
-QT_COMPILER = llvm-mingw_64
-QT_BASE = C:/Qt/$(QT_VERSION)/$(QT_COMPILER)
+# Qt Configuration - can be overridden by environment variables
+QT_VERSION ?= 6.10.0
 
-# Build tools (derived from Qt base path)
-QMAKE = $(QT_BASE)/bin/qmake.exe
-MAKE = mingw32-make
-WINDEPLOYQT = $(QT_BASE)/bin/windeployqt.exe
+# Platform detection and defaults
+ifeq ($(OS),Windows_NT)
+    # Windows defaults
+    QT_COMPILER ?= llvm-mingw_64
+    QT_BASE ?= C:/Qt/$(QT_VERSION)/$(QT_COMPILER)
+    QMAKE ?= $(QT_BASE)/bin/qmake.exe
+    MAKE ?= mingw32-make
+    DEPLOY_TOOL ?= $(QT_BASE)/bin/windeployqt.exe
+    DEPLOY_FLAGS ?= --no-translations
+    RM = cmd /c del /q
+    RMDIR = cmd /c rmdir /s /q
+    MKDIR = cmd /c mkdir
+    CD = cd
+    AND = &&
+    DEVNULL = 2>nul
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Darwin)
+        # macOS defaults
+        QT_COMPILER ?= macos
+        QT_BASE ?= ~/Qt/$(QT_VERSION)/$(QT_COMPILER)
+        QMAKE ?= $(QT_BASE)/bin/qmake
+        MAKE ?= make
+        DEPLOY_TOOL ?= $(QT_BASE)/bin/macdeployqt
+        DEPLOY_FLAGS ?=
+    else
+        # Linux defaults
+        QT_COMPILER ?= gcc_64
+        QT_BASE ?= ~/Qt/$(QT_VERSION)/$(QT_COMPILER)
+        QMAKE ?= $(QT_BASE)/bin/qmake
+        MAKE ?= make
+        DEPLOY_TOOL ?= echo "Note: Deploy manually or install linuxdeployqt"
+        DEPLOY_FLAGS ?=
+    endif
+    RM = rm -f
+    RMDIR = rm -rf
+    MKDIR = mkdir -p
+    CD = cd
+    AND = &&
+    DEVNULL = 2>/dev/null
+endif
 
 .PHONY: all release release-console debug debug-console clean deploy help
 
@@ -38,7 +72,7 @@ release:
 	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG-=console
 	@$(MAKE) -f Makefile.Release
 	@echo "Deploying Qt dependencies..."
-	@cd build/release && $(WINDEPLOYQT) --no-translations pdfextractor_gui.exe
+	@$(CD) build/release $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui.exe
 	@echo "Build complete: build/release/pdfextractor_gui.exe"
 
 # Release with Console - For Claude/debugging
@@ -50,7 +84,7 @@ release-console:
 	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG+=console
 	@$(MAKE) -f Makefile.Release
 	@echo "Deploying Qt dependencies..."
-	@cd build/release-console && $(WINDEPLOYQT) --no-translations pdfextractor_gui_console.exe
+	@$(CD) build/release-console $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_console.exe
 	@echo "Build complete: build/release-console/pdfextractor_gui_console.exe"
 
 # Debug Windows GUI
@@ -62,7 +96,7 @@ debug:
 	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG-=console
 	@$(MAKE) -f Makefile.Debug
 	@echo "Deploying Qt dependencies..."
-	@cd build/debug && $(WINDEPLOYQT) --no-translations pdfextractor_gui_debug.exe
+	@$(CD) build/debug $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_debug.exe
 	@echo "Build complete: build/debug/pdfextractor_gui_debug.exe"
 
 # Debug with Console
@@ -74,7 +108,7 @@ debug-console:
 	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG+=console
 	@$(MAKE) -f Makefile.Debug
 	@echo "Deploying Qt dependencies..."
-	@cd build/debug-console && $(WINDEPLOYQT) --no-translations pdfextractor_gui_debug_console.exe
+	@$(CD) build/debug-console $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_debug_console.exe
 	@echo "Build complete: build/debug-console/pdfextractor_gui_debug_console.exe"
 
 # Build all configurations
@@ -91,13 +125,13 @@ all: release release-console debug debug-console
 # Clean all builds
 clean:
 	@echo "Cleaning all build artifacts..."
-	@cmd /c "if exist build rmdir /s /q build 2>nul"
-	@cmd /c "if exist Makefile del /q Makefile 2>nul"
-	@cmd /c "if exist Makefile.Debug del /q Makefile.Debug 2>nul"
-	@cmd /c "if exist Makefile.Release del /q Makefile.Release 2>nul"
-	@cmd /c "if exist .qmake.stash del /q .qmake.stash 2>nul"
-	@cmd /c "if exist object_script.*.Debug del /q object_script.*.Debug 2>nul"
-	@cmd /c "if exist object_script.*.Release del /q object_script.*.Release 2>nul"
+	@$(RMDIR) build $(DEVNULL) || true
+	@$(RM) Makefile $(DEVNULL) || true
+	@$(RM) Makefile.Debug $(DEVNULL) || true
+	@$(RM) Makefile.Release $(DEVNULL) || true
+	@$(RM) .qmake.stash $(DEVNULL) || true
+	@$(RM) object_script.*.Debug $(DEVNULL) || true
+	@$(RM) object_script.*.Release $(DEVNULL) || true
 	@echo "Clean complete"
 
 # Show help
