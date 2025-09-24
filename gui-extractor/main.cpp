@@ -946,7 +946,7 @@ private:
         summaryLayout->setSpacing(0);
 
         m_summaryTextEdit = new QTextEdit();
-        m_summaryTextEdit->setReadOnly(true);
+        // Make editable so user can modify if needed
         m_summaryTextEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 14px; line-height: 1.6; }");
         summaryLayout->addWidget(m_summaryTextEdit);
 
@@ -990,7 +990,7 @@ private:
         auto *originalGroup = new QGroupBox("Original Keywords");
         auto *originalLayout = new QVBoxLayout(originalGroup);
         m_keywordsTextEdit = new QTextEdit();
-        m_keywordsTextEdit->setReadOnly(true);
+        // Make editable so user can modify if needed
         m_keywordsTextEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
         originalLayout->addWidget(m_keywordsTextEdit);
         keywordsSplitter->addWidget(originalGroup);
@@ -999,7 +999,7 @@ private:
         auto *suggestionsGroup = new QGroupBox("Suggested Prompt Improvements");
         auto *suggestionsLayout = new QVBoxLayout(suggestionsGroup);
         m_promptSuggestionsEdit = new QTextEdit();
-        m_promptSuggestionsEdit->setReadOnly(true);
+        // Make editable so user can modify if needed
         m_promptSuggestionsEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
         suggestionsLayout->addWidget(m_promptSuggestionsEdit);
         keywordsSplitter->addWidget(suggestionsGroup);
@@ -1008,7 +1008,7 @@ private:
         auto *refinedGroup = new QGroupBox("Keywords with Suggestions");
         auto *refinedLayout = new QVBoxLayout(refinedGroup);
         m_refinedKeywordsEdit = new QTextEdit();
-        m_refinedKeywordsEdit->setReadOnly(true);
+        // Make editable so user can modify if needed
         m_refinedKeywordsEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
         refinedLayout->addWidget(m_refinedKeywordsEdit);
         keywordsSplitter->addWidget(refinedGroup);
@@ -1083,6 +1083,16 @@ private:
         mainLayout->addWidget(statusBar);
     }
 
+    // Helper function to strip AI artifact markers
+    QString stripAIArtifacts(const QString& text) {
+        QString cleaned = text;
+        // Remove the specific artifact marker that can appear anywhere
+        cleaned.remove("<|start|>final<|message|>");
+        // Also remove any variations with whitespace
+        cleaned.remove(QRegularExpression("<\\|start\\|>\\s*final\\s*<\\|message\\|>"));
+        return cleaned.trimmed();
+    }
+
     void connectSignals() {
         connect(m_browseButton, &QPushButton::clicked, this, &PDFExtractorGUI::browseForPDF);
         connect(m_pdfAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzePDF);
@@ -1100,19 +1110,23 @@ private:
         });
 
         connect(m_queryRunner, &QueryRunner::summaryGenerated, [this](const QString& summary) {
-            m_summaryTextEdit->setPlainText(summary);
+            QString cleanedSummary = stripAIArtifacts(summary);
+            m_summaryTextEdit->setPlainText(cleanedSummary);
         });
 
         connect(m_queryRunner, &QueryRunner::keywordsExtracted, [this](const QString& keywords) {
-            m_keywordsTextEdit->setPlainText(keywords);
+            QString cleanedKeywords = stripAIArtifacts(keywords);
+            m_keywordsTextEdit->setPlainText(cleanedKeywords);
         });
 
         connect(m_queryRunner, &QueryRunner::promptRefined, [this](const QString& prompt) {
-            m_promptSuggestionsEdit->setPlainText(prompt);
+            QString cleanedPrompt = stripAIArtifacts(prompt);
+            m_promptSuggestionsEdit->setPlainText(cleanedPrompt);
         });
 
         connect(m_queryRunner, &QueryRunner::refinedKeywordsExtracted, [this](const QString& keywords) {
-            m_refinedKeywordsEdit->setPlainText(keywords);
+            QString cleanedKeywords = stripAIArtifacts(keywords);
+            m_refinedKeywordsEdit->setPlainText(cleanedKeywords);
         });
 
         connect(m_queryRunner, &QueryRunner::processingComplete, [this]() {

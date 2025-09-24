@@ -17,8 +17,25 @@
 QT_VERSION ?= 6.10.0
 
 # Platform detection and defaults
-ifeq ($(OS),Windows_NT)
-    # Windows defaults
+# Check if we're in WSL (Windows Subsystem for Linux)
+UNAME_R := $(shell uname -r)
+ifneq ($(findstring microsoft,$(UNAME_R)),)
+    # WSL - Building Windows binaries from Linux environment
+    QT_COMPILER ?= llvm-mingw_64
+    QT_BASE ?= /mnt/c/Qt/$(QT_VERSION)/$(QT_COMPILER)
+    # Call Windows executables directly - WSL can execute .exe files
+    QMAKE ?= $(QT_BASE)/bin/qmake.exe
+    MAKE ?= mingw32-make
+    DEPLOY_TOOL ?= $(QT_BASE)/bin/windeployqt.exe
+    DEPLOY_FLAGS ?= --no-translations
+    RM = rm -f
+    RMDIR = rm -rf
+    MKDIR = mkdir -p
+    CD = cd
+    AND = &&
+    DEVNULL = 2>/dev/null
+else ifeq ($(OS),Windows_NT)
+    # Native Windows (cmd/PowerShell)
     QT_COMPILER ?= llvm-mingw_64
     QT_BASE ?= C:/Qt/$(QT_VERSION)/$(QT_COMPILER)
     QMAKE ?= $(QT_BASE)/bin/qmake.exe
@@ -69,10 +86,14 @@ release:
 	@echo "Building Release Windows GUI (no console)"
 	@echo "Target: build/release/pdfextractor_gui.exe"
 	@echo "================================================"
+ifeq ($(findstring microsoft,$(UNAME_R)),)
 	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG-=console
 	@$(MAKE) -f Makefile.Release
+else
+	@cmd.exe /c "C:\Qt\6.10.0\llvm-mingw_64\bin\qmake.exe CONFIG+=release CONFIG-=debug CONFIG-=console && mingw32-make -f Makefile.Release"
+endif
 	@echo "Deploying Qt dependencies..."
-	@$(CD) build/release $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui.exe
+	@cd build/release && $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui.exe
 	@echo "Build complete: build/release/pdfextractor_gui.exe"
 
 # Release with Console - For Claude/debugging
@@ -81,10 +102,14 @@ release-console:
 	@echo "Building Release with Console (for Claude/debug)"
 	@echo "Target: build/release-console/pdfextractor_gui_console.exe"
 	@echo "================================================"
+ifeq ($(findstring microsoft,$(UNAME_R)),)
 	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG+=console
 	@$(MAKE) -f Makefile.Release
+else
+	@cmd.exe /c "C:\Qt\6.10.0\llvm-mingw_64\bin\qmake.exe CONFIG+=release CONFIG-=debug CONFIG+=console && mingw32-make -f Makefile.Release"
+endif
 	@echo "Deploying Qt dependencies..."
-	@$(CD) build/release-console $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_console.exe
+	@cd build/release-console && $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_console.exe
 	@echo "Build complete: build/release-console/pdfextractor_gui_console.exe"
 
 # Debug Windows GUI
@@ -93,10 +118,14 @@ debug:
 	@echo "Building Debug Windows GUI"
 	@echo "Target: build/debug/pdfextractor_gui_debug.exe"
 	@echo "================================================"
+ifeq ($(findstring microsoft,$(UNAME_R)),)
 	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG-=console
 	@$(MAKE) -f Makefile.Debug
+else
+	@cmd.exe /c "C:\Qt\6.10.0\llvm-mingw_64\bin\qmake.exe CONFIG+=debug CONFIG-=release CONFIG-=console && mingw32-make -f Makefile.Debug"
+endif
 	@echo "Deploying Qt dependencies..."
-	@$(CD) build/debug $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_debug.exe
+	@cd build/debug && $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_debug.exe
 	@echo "Build complete: build/debug/pdfextractor_gui_debug.exe"
 
 # Debug with Console
@@ -105,10 +134,14 @@ debug-console:
 	@echo "Building Debug with Console"
 	@echo "Target: build/debug-console/pdfextractor_gui_debug_console.exe"
 	@echo "================================================"
+ifeq ($(findstring microsoft,$(UNAME_R)),)
 	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG+=console
 	@$(MAKE) -f Makefile.Debug
+else
+	@cmd.exe /c "C:\Qt\6.10.0\llvm-mingw_64\bin\qmake.exe CONFIG+=debug CONFIG-=release CONFIG+=console && mingw32-make -f Makefile.Debug"
+endif
 	@echo "Deploying Qt dependencies..."
-	@$(CD) build/debug-console $(AND) $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_debug_console.exe
+	@cd build/debug-console && $(DEPLOY_TOOL) $(DEPLOY_FLAGS) pdfextractor_gui_debug_console.exe
 	@echo "Build complete: build/debug-console/pdfextractor_gui_debug_console.exe"
 
 # Build all configurations
