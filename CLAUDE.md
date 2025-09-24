@@ -23,9 +23,15 @@ The UI has been carefully designed and tested. Any changes should only be made w
 - **Database**: SQLite-based settings storage with per-prompt configuration
 - **Status Bar**: Shows status messages and spinner animation during processing
 
+### Build Instructions
+
+**Check `gui-extractor/BUILD_CONFIG.txt` for current Qt paths and build setup.**
+- Primary command: `make release-console` (builds with console output for debugging)
+- Builds to: `build/release-console/pdfextractor_gui_console.exe`
+
 ### Technical Notes
 
 - Built with Qt 6.10.0 using LLVM-MinGW compiler
 - Uses QPdfDocument for PDF text extraction
 - Integrates with LM Studio API for AI text processing
-- Settings stored in SQLite database (release/settings.db)
+- Settings stored in SQLite database (in exe directory: settings.db)

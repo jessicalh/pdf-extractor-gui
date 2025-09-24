@@ -49,6 +49,7 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QSet>
+#include <QMap>
 #include <QStandardPaths>
 #include <iostream>
 #include <QLoggingCategory>
@@ -1129,8 +1130,10 @@ private:
                 updateStatus("No extracted text to copy");
                 return;
             }
+            // Add "Extracted Text" header to clipboard text only
+            QString clipboardText = "Extracted Text\n\n" + text;
             QClipboard *clipboard = QApplication::clipboard();
-            clipboard->setText(text);
+            clipboard->setText(clipboardText);
             updateStatus("Extracted text copied to clipboard");
         });
 
@@ -1148,8 +1151,9 @@ private:
         });
 
         connect(m_copyKeywordsButton, &QPushButton::clicked, [this]() {
-            // Collect all unique keywords from both fields
-            QSet<QString> uniqueKeywords;
+            // Collect all unique keywords from both fields (case-insensitive comparison)
+            // Use QMap to track lowercase keys with original case values preserved
+            QMap<QString, QString> uniqueKeywords; // lowercase key -> original case value
 
             // Process original keywords
             QString originalText = m_keywordsTextEdit->toPlainText();
@@ -1162,7 +1166,11 @@ private:
                     keyword.replace('\n', ' ');
                     keyword = keyword.simplified();
                     if (!keyword.isEmpty()) {
-                        uniqueKeywords.insert(keyword);
+                        QString lowerKey = keyword.toLower();
+                        // Only insert if not already present (preserves first occurrence)
+                        if (!uniqueKeywords.contains(lowerKey)) {
+                            uniqueKeywords.insert(lowerKey, keyword);
+                        }
                     }
                 }
             }
@@ -1178,7 +1186,11 @@ private:
                     keyword.replace('\n', ' ');
                     keyword = keyword.simplified();
                     if (!keyword.isEmpty()) {
-                        uniqueKeywords.insert(keyword);
+                        QString lowerKey = keyword.toLower();
+                        // Only insert if not already present (preserves first occurrence)
+                        if (!uniqueKeywords.contains(lowerKey)) {
+                            uniqueKeywords.insert(lowerKey, keyword);
+                        }
                     }
                 }
             }
@@ -1189,7 +1201,7 @@ private:
                 return;
             }
 
-            // Convert to sorted list for consistent display
+            // Convert to sorted list for consistent display (using original case)
             QStringList keywordList = uniqueKeywords.values();
             keywordList.sort(Qt::CaseInsensitive);
 

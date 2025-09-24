@@ -13,9 +13,16 @@
 #   make clean        : Clean all builds
 #   make help         : Show this help
 
-QMAKE = C:/Qt/6.10.0/llvm-mingw_64/bin/qmake.exe
+# Environment-specific paths (adjust for your system)
+# These are the only lines that need to change for different build environments
+QT_VERSION = 6.10.0
+QT_COMPILER = llvm-mingw_64
+QT_BASE = C:/Qt/$(QT_VERSION)/$(QT_COMPILER)
+
+# Build tools (derived from Qt base path)
+QMAKE = $(QT_BASE)/bin/qmake.exe
 MAKE = mingw32-make
-WINDEPLOYQT = C:/Qt/6.10.0/llvm-mingw_64/bin/windeployqt.exe
+WINDEPLOYQT = $(QT_BASE)/bin/windeployqt.exe
 
 .PHONY: all release release-console debug debug-console clean deploy help
 
