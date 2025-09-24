@@ -116,6 +116,7 @@ private:
         QString url;
         QString modelName;
         int overallTimeout;
+        int textTruncationLimit;
 
         // Summary
         double summaryTemp;

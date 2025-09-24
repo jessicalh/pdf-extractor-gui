@@ -127,6 +127,80 @@ private:
     QListWidget *m_listWidget;
 };
 
+// Centralized default settings - Single source of truth for all defaults
+struct DefaultSettings {
+    // Connection defaults
+    static constexpr const char* URL = "http://127.0.0.1:8090/v1/chat/completions";
+    static constexpr const char* MODEL_NAME = "gpt-oss-120b";
+    static constexpr int OVERALL_TIMEOUT = 900000;  // 15 minutes
+
+    // Text processing defaults
+    static constexpr int TEXT_TRUNCATION_LIMIT = 100000;  // 100k characters
+
+    // Summary defaults
+    static constexpr double SUMMARY_TEMPERATURE = 0.7;
+    static constexpr int SUMMARY_CONTEXT_LENGTH = 16000;  // 16k context
+    static constexpr int SUMMARY_TIMEOUT = 900000;  // 15 minutes
+
+    // Keyword defaults
+    static constexpr double KEYWORD_TEMPERATURE = 0.3;  // Very low temperature for precise extraction
+    static constexpr int KEYWORD_CONTEXT_LENGTH = 16000;  // 16k context
+    static constexpr int KEYWORD_TIMEOUT = 900000;  // 15 minutes
+
+    // Refinement defaults
+    static constexpr double REFINEMENT_TEMPERATURE = 0.8;
+    static constexpr int REFINEMENT_CONTEXT_LENGTH = 16000;  // 16k context
+    static constexpr int REFINEMENT_TIMEOUT = 900000;  // 15 minutes
+
+    // Default prompts are defined in the functions below
+    static QString getSummaryPreprompt() {
+        return "You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'";
+    }
+
+    static QString getSummaryPrompt() {
+        return "Please provide a summary:\n"
+               "1. Main research question or hypothesis\n"
+               "2. Key findings (3-5 bullet points with specific results)\n"
+               "3. Methodology and approach used\n"
+               "4. Significance and contribution to the field\n"
+               "5. Potential applications, implications, or future directions\n\n"
+               "Be concise yet comprehensive. Focus on information valuable for literature review inclusion. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
+               "Text:\n{text}";
+    }
+
+    static QString getKeywordPreprompt() {
+        return DEFAULT_KEYWORD_PREPROMPT;
+    }
+
+    static QString getKeywordPrompt() {
+        return "Extract and return a comma-delimited list containing: "
+               "organism names (species, genus), "
+               "chemicals (including specific proteins, enzymes, drugs, compounds), "
+               "statistical methods (test names, analysis techniques), "
+               "environmental factors (conditions, locations, habitats), "
+               "chemical reactions (reaction types, mechanisms), "
+               "computational methods (algorithms, models, software tools), "
+               "and research techniques (experimental methods, instruments).\n\n"
+               "Rules:\n"
+               "- Return ONLY a comma-delimited list, no other text\n"
+               "- List each keyword only once (no duplicates)\n"
+               "- Never create permutations or variations of words\n"
+               "- Use the shortest complete scientific form\n"
+               "- No explanations, titles, suffixes, or commentary\n"
+               "- If no relevant keywords found, return 'Not Evaluated'\n"
+               "- Ensure keywords are sensible and actually present in the text\n\n"
+               "Text:\n{text}";
+    }
+
+    static QString getKeywordRefinementPreprompt() {
+        return DEFAULT_KEYWORD_REFINEMENT_PREPROMPT;
+    }
+
+    static QString getPrepromptRefinementPrompt() {
+        return DEFAULT_PREPROMPT_REFINEMENT_PROMPT;
+    }
+};
+
 // Settings Dialog with SQLite-backed fields
 class SettingsDialog : public QDialog
 {
@@ -476,53 +550,30 @@ public:
 
     void restoreDefaults() {
         // Connection defaults
-        m_urlEdit->setText("http://127.0.0.1:8090/v1/chat/completions");
-        m_modelNameEdit->setText("gpt-oss-120b");
-        m_overallTimeoutEdit->setValue(600000);
+        m_urlEdit->setText(DefaultSettings::URL);
+        m_modelNameEdit->setText(DefaultSettings::MODEL_NAME);
+        m_overallTimeoutEdit->setValue(DefaultSettings::OVERALL_TIMEOUT);
 
-        // Summary defaults (optimized for gpt-oss-120b)
-        m_summaryTempEdit->setValue(0.7);  // Lower temperature for more deterministic summaries
-        m_summaryContextEdit->setValue(16000);  // Increased context for better comprehension
-        m_summaryTimeoutEdit->setValue(600000);
-        m_summaryPrepromptEdit->setPlainText("You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'");
-        m_summaryPromptEdit->setPlainText("Please provide a summary:\n"
-                                         "1. Main research question or hypothesis\n"
-                                         "2. Key findings (3-5 bullet points with specific results)\n"
-                                         "3. Methodology and approach used\n"
-                                         "4. Significance and contribution to the field\n"
-                                         "5. Potential applications, implications, or future directions\n\n"
-                                         "Be concise yet comprehensive. Focus on information valuable for literature review inclusion. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
-                                         "Text:\n{text}");
+        // Summary defaults
+        m_summaryTempEdit->setValue(DefaultSettings::SUMMARY_TEMPERATURE);
+        m_summaryContextEdit->setValue(DefaultSettings::SUMMARY_CONTEXT_LENGTH);
+        m_summaryTimeoutEdit->setValue(DefaultSettings::SUMMARY_TIMEOUT);
+        m_summaryPrepromptEdit->setPlainText(DefaultSettings::getSummaryPreprompt());
+        m_summaryPromptEdit->setPlainText(DefaultSettings::getSummaryPrompt());
 
-        // Keyword defaults (optimized for gpt-oss-120b)
-        m_keywordTempEdit->setValue(0.3);  // Very low temperature for precise extraction
-        m_keywordContextEdit->setValue(16000);  // Standardized context length
-        m_keywordTimeoutEdit->setValue(600000);
-        m_keywordPrepromptEdit->setPlainText(DEFAULT_KEYWORD_PREPROMPT);
-        m_keywordPromptEdit->setPlainText("Extract and return a comma-delimited list containing: "
-                                         "organism names (species, genus), "
-                                         "chemicals (including specific proteins, enzymes, drugs, compounds), "
-                                         "statistical methods (test names, analysis techniques), "
-                                         "environmental factors (conditions, locations, habitats), "
-                                         "chemical reactions (reaction types, mechanisms), "
-                                         "computational methods (algorithms, models, software tools), "
-                                         "and research techniques (experimental methods, instruments).\n\n"
-                                         "Rules:\n"
-                                         "- Return ONLY a comma-delimited list, no other text\n"
-                                         "- List each keyword only once (no duplicates)\n"
-                                         "- Never create permutations or variations of words\n"
-                                         "- Use the shortest complete scientific form\n"
-                                         "- No explanations, titles, suffixes, or commentary\n"
-                                         "- If no relevant keywords found, return 'Not Evaluated'\n"
-                                         "- Ensure keywords are sensible and actually present in the text\n\n"
-                                         "Text:\n{text}");
+        // Keyword defaults
+        m_keywordTempEdit->setValue(DefaultSettings::KEYWORD_TEMPERATURE);
+        m_keywordContextEdit->setValue(DefaultSettings::KEYWORD_CONTEXT_LENGTH);
+        m_keywordTimeoutEdit->setValue(DefaultSettings::KEYWORD_TIMEOUT);
+        m_keywordPrepromptEdit->setPlainText(DefaultSettings::getKeywordPreprompt());
+        m_keywordPromptEdit->setPlainText(DefaultSettings::getKeywordPrompt());
 
-        // Refinement defaults (optimized for gpt-oss-120b)
-        m_refinementTempEdit->setValue(0.8);  // Default temperature for refinement
-        m_refinementContextEdit->setValue(16000);
-        m_refinementTimeoutEdit->setValue(600000);
-        m_keywordRefinementPrepromptEdit->setPlainText(DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
-        m_prepromptRefinementPromptEdit->setPlainText(DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
+        // Refinement defaults
+        m_refinementTempEdit->setValue(DefaultSettings::REFINEMENT_TEMPERATURE);
+        m_refinementContextEdit->setValue(DefaultSettings::REFINEMENT_CONTEXT_LENGTH);
+        m_refinementTimeoutEdit->setValue(DefaultSettings::REFINEMENT_TIMEOUT);
+        m_keywordRefinementPrepromptEdit->setPlainText(DefaultSettings::getKeywordRefinementPreprompt());
+        m_prepromptRefinementPromptEdit->setPlainText(DefaultSettings::getPrepromptRefinementPrompt());
     }
 
 private:
@@ -692,6 +743,7 @@ private:
                 url TEXT,
                 model_name TEXT,
                 overall_timeout TEXT,
+                text_truncation_limit TEXT,
 
                 summary_temperature TEXT,
                 summary_context_length TEXT,
@@ -730,7 +782,7 @@ private:
         if (count == 0) {
             QString insertDefaults = R"(
                 INSERT INTO settings (
-                    url, model_name, overall_timeout,
+                    url, model_name, overall_timeout, text_truncation_limit,
                     summary_temperature, summary_context_length, summary_timeout,
                     summary_preprompt, summary_prompt,
                     keyword_temperature, keyword_context_length, keyword_timeout,
@@ -738,7 +790,7 @@ private:
                     refinement_temperature, refinement_context_length, refinement_timeout,
                     keyword_refinement_preprompt, preprompt_refinement_prompt
                 ) VALUES (
-                    :url, :model_name, :overall_timeout,
+                    :url, :model_name, :overall_timeout, :text_truncation_limit,
                     :summary_temperature, :summary_context_length, :summary_timeout,
                     :summary_preprompt, :summary_prompt,
                     :keyword_temperature, :keyword_context_length, :keyword_timeout,
@@ -749,53 +801,31 @@ private:
             )";
 
             query.prepare(insertDefaults);
-            query.bindValue(":url", "http://127.0.0.1:8090/v1/chat/completions");
-            query.bindValue(":model_name", "gpt-oss-120b");
-            query.bindValue(":overall_timeout", "600000");
+            query.bindValue(":url", DefaultSettings::URL);
+            query.bindValue(":model_name", DefaultSettings::MODEL_NAME);
+            query.bindValue(":overall_timeout", QString::number(DefaultSettings::OVERALL_TIMEOUT));
+            query.bindValue(":text_truncation_limit", QString::number(DefaultSettings::TEXT_TRUNCATION_LIMIT));
 
-            // Summary settings (optimized for gpt-oss-120b)
-            query.bindValue(":summary_temperature", "0.7");
-            query.bindValue(":summary_context_length", "16000");
-            query.bindValue(":summary_timeout", "600000");
-            query.bindValue(":summary_preprompt", "You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'");
-            query.bindValue(":summary_prompt", "Please provide a summary:\n"
-                          "1. Main research question or hypothesis\n"
-                          "2. Key findings (3-5 bullet points with specific results)\n"
-                          "3. Methodology and approach used\n"
-                          "4. Significance and contribution to the field\n"
-                          "5. Potential applications, implications, or future directions\n\n"
-                          "Be concise yet comprehensive. Focus on information valuable for literature review inclusion. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
-                          "Text:\n{text}");
+            // Summary settings
+            query.bindValue(":summary_temperature", QString::number(DefaultSettings::SUMMARY_TEMPERATURE));
+            query.bindValue(":summary_context_length", QString::number(DefaultSettings::SUMMARY_CONTEXT_LENGTH));
+            query.bindValue(":summary_timeout", QString::number(DefaultSettings::SUMMARY_TIMEOUT));
+            query.bindValue(":summary_preprompt", DefaultSettings::getSummaryPreprompt());
+            query.bindValue(":summary_prompt", DefaultSettings::getSummaryPrompt());
 
-            // Keyword settings (optimized for gpt-oss-120b)
-            query.bindValue(":keyword_temperature", "0.3");
-            query.bindValue(":keyword_context_length", "16000");
-            query.bindValue(":keyword_timeout", "600000");
-            query.bindValue(":keyword_preprompt", DEFAULT_KEYWORD_PREPROMPT);
-            query.bindValue(":keyword_prompt", "Extract and return a comma-delimited list containing: "
-                          "organism names (species, genus), "
-                          "chemicals (including specific proteins, enzymes, drugs, compounds), "
-                          "statistical methods (test names, analysis techniques), "
-                          "environmental factors (conditions, locations, habitats), "
-                          "chemical reactions (reaction types, mechanisms), "
-                          "computational methods (algorithms, models, software tools), "
-                          "and research techniques (experimental methods, instruments).\n\n"
-                          "Rules:\n"
-                          "- Return ONLY a comma-delimited list, no other text\n"
-                          "- List each keyword only once (no duplicates)\n"
-                          "- Never create permutations or variations of words\n"
-                          "- Use the shortest complete scientific form\n"
-                          "- No explanations, titles, suffixes, or commentary\n"
-                          "- If no relevant keywords found, return 'Not Evaluated'\n"
-                          "- Ensure keywords are sensible and actually present in the text\n\n"
-                          "Text:\n{text}");
+            // Keyword settings
+            query.bindValue(":keyword_temperature", QString::number(DefaultSettings::KEYWORD_TEMPERATURE));
+            query.bindValue(":keyword_context_length", QString::number(DefaultSettings::KEYWORD_CONTEXT_LENGTH));
+            query.bindValue(":keyword_timeout", QString::number(DefaultSettings::KEYWORD_TIMEOUT));
+            query.bindValue(":keyword_preprompt", DefaultSettings::getKeywordPreprompt());
+            query.bindValue(":keyword_prompt", DefaultSettings::getKeywordPrompt());
 
-            // Refinement settings (optimized for gpt-oss-120b)
-            query.bindValue(":refinement_temperature", "0.8");
-            query.bindValue(":refinement_context_length", "16000");
-            query.bindValue(":refinement_timeout", "600000");
-            query.bindValue(":keyword_refinement_preprompt", DEFAULT_KEYWORD_REFINEMENT_PREPROMPT);
-            query.bindValue(":preprompt_refinement_prompt", DEFAULT_PREPROMPT_REFINEMENT_PROMPT);
+            // Refinement settings
+            query.bindValue(":refinement_temperature", QString::number(DefaultSettings::REFINEMENT_TEMPERATURE));
+            query.bindValue(":refinement_context_length", QString::number(DefaultSettings::REFINEMENT_CONTEXT_LENGTH));
+            query.bindValue(":refinement_timeout", QString::number(DefaultSettings::REFINEMENT_TIMEOUT));
+            query.bindValue(":keyword_refinement_preprompt", DefaultSettings::getKeywordRefinementPreprompt());
+            query.bindValue(":preprompt_refinement_prompt", DefaultSettings::getPrepromptRefinementPrompt());
 
             if (!query.exec()) {
                 QMessageBox::warning(nullptr, "Database Warning",
@@ -912,7 +942,7 @@ private:
         extractedLayout->setSpacing(0);
 
         m_extractedTextEdit = new QTextEdit();
-        m_extractedTextEdit->setReadOnly(true);
+        // Make editable so user can modify if needed
         m_extractedTextEdit->setStyleSheet("QTextEdit { font-family: 'Consolas', monospace; }");
         extractedLayout->addWidget(m_extractedTextEdit);
 
@@ -1090,6 +1120,10 @@ private:
         cleaned.remove("<|start|>final<|message|>");
         // Also remove any variations with whitespace
         cleaned.remove(QRegularExpression("<\\|start\\|>\\s*final\\s*<\\|message\\|>"));
+        // Also check for the exact string as it appears
+        cleaned.replace("<|start|>final<|message|>", "");
+        // Remove any remaining artifacts with different spacing or case
+        cleaned.remove(QRegularExpression("<\\|start\\|>[^<]*<\\|message\\|>"));
         return cleaned.trimmed();
     }
 

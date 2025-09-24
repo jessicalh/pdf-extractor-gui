@@ -152,9 +152,9 @@ QString QueryRunner::cleanupText(const QString& text, InputType type) {
     cleaned = cleaned.trimmed();
 
     // Ensure text isn't too long for the model
-    if (cleaned.length() > 50000) {
-        emit progressMessage("Text truncated to 50,000 characters");
-        cleaned = cleaned.left(50000);
+    if (cleaned.length() > m_settings.textTruncationLimit) {
+        emit progressMessage(QString("Text truncated to %1 characters").arg(m_settings.textTruncationLimit));
+        cleaned = cleaned.left(m_settings.textTruncationLimit);
     }
 
     return cleaned;
@@ -370,6 +370,10 @@ void QueryRunner::loadSettingsFromDatabase() {
     m_settings.url = query.value("url").toString();
     m_settings.modelName = query.value("model_name").toString();
     m_settings.overallTimeout = query.value("overall_timeout").toString().toInt();
+    // Text truncation limit - use default if not in database (for backwards compatibility)
+    m_settings.textTruncationLimit = query.value("text_truncation_limit").isNull()
+        ? 100000
+        : query.value("text_truncation_limit").toString().toInt();
 
     // Summary settings
     m_settings.summaryTemp = query.value("summary_temperature").toString().toDouble();
