@@ -49,6 +49,13 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QSet>
+#include <QStandardPaths>
+#include <iostream>
+#include <QLoggingCategory>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <dbghelp.h>
+#endif
 #include "queryrunner.h"
 
 // Default prompts for keyword refinement (new fields)
@@ -616,15 +623,63 @@ private:
 
 private:
     void initDatabase() {
-        QString dbPath = QDir::current().absoluteFilePath("settings.db");
+        // Always use the executable directory for the database
+        QString appDir = QCoreApplication::applicationDirPath();
+        QString dbPath = QDir(appDir).absoluteFilePath("settings.db");
+
+        // Log the path we're using
+        qDebug() << "Database path:" << dbPath;
+
+        // Ensure the directory exists and is writable
+        QFileInfo dbInfo(dbPath);
+        QDir dbDir = dbInfo.dir();
+
+        if (!dbDir.exists()) {
+            qWarning() << "Database directory does not exist:" << dbDir.absolutePath();
+            if (!dbDir.mkpath(".")) {
+                qCritical() << "Failed to create database directory";
+                // Fall back to user's data directory
+                QString fallbackPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+                QDir fallbackDir(fallbackPath);
+                if (!fallbackDir.exists()) {
+                    fallbackDir.mkpath(".");
+                }
+                dbPath = fallbackDir.absoluteFilePath("settings.db");
+                qWarning() << "Using fallback database path:" << dbPath;
+            }
+        }
+
+        // Check if we can write to the location
+        if (dbInfo.exists() && !dbInfo.isWritable()) {
+            qWarning() << "Database file is not writable:" << dbPath;
+            // Try fallback location
+            QString fallbackPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            QDir fallbackDir(fallbackPath);
+            if (!fallbackDir.exists()) {
+                fallbackDir.mkpath(".");
+            }
+            dbPath = fallbackDir.absoluteFilePath("settings.db");
+            qWarning() << "Using fallback database path:" << dbPath;
+        }
 
         QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE");
         db.setDatabaseName(dbPath);
 
         if (!db.open()) {
-            QMessageBox::critical(nullptr, "Database Error",
-                                "Failed to open database: " + db.lastError().text());
-            return;
+            qCritical() << "Failed to open database:" << db.lastError().text();
+
+            // Try to use in-memory database as last resort
+            db.setDatabaseName(":memory:");
+            if (!db.open()) {
+                QMessageBox::critical(nullptr, "Database Error",
+                                    "Failed to open database: " + db.lastError().text() +
+                                    "\n\nThe application will continue with default settings.");
+                return;
+            } else {
+                QMessageBox::warning(nullptr, "Database Warning",
+                                   "Could not access settings database at:\n" + dbPath +
+                                   "\n\nUsing temporary in-memory database. Settings will not be saved.");
+            }
         }
 
         QSqlQuery query(db);
@@ -1085,8 +1140,10 @@ private:
                 updateStatus("No summary to copy");
                 return;
             }
+            // Add "Paper Summary" header to clipboard text only
+            QString clipboardText = "Paper Summary\n\n" + summary;
             QClipboard *clipboard = QApplication::clipboard();
-            clipboard->setText(summary);
+            clipboard->setText(clipboardText);
             updateStatus("Summary copied to clipboard");
         });
 
@@ -1499,14 +1556,154 @@ private:
 
 #include "main.moc"
 
-int main(int argc, char *argv[])
+#ifdef Q_OS_WIN
+// Windows exception handler
+LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* pExceptionInfo)
 {
+    // Create crash log directory if it doesn't exist
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString crashDir = appDir + "/logs";
+    QDir().mkpath(crashDir);
+
+    // Create a crash log file with timestamp
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
+    QString crashLogPath = crashDir + "/crash_" + timestamp + ".log";
+    QFile crashLog(crashLogPath);
+
+    if (crashLog.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream stream(&crashLog);
+        stream << "=== CRASH REPORT ===" << Qt::endl;
+        stream << "Time: " << QDateTime::currentDateTime().toString(Qt::ISODate) << Qt::endl;
+        stream << "Exception Code: 0x" << QString::number(pExceptionInfo->ExceptionRecord->ExceptionCode, 16) << Qt::endl;
+
+        // Common exception codes
+        QString exceptionName;
+        switch(pExceptionInfo->ExceptionRecord->ExceptionCode) {
+            case EXCEPTION_ACCESS_VIOLATION:
+                exceptionName = "Access Violation";
+                break;
+            case EXCEPTION_DATATYPE_MISALIGNMENT:
+                exceptionName = "Datatype Misalignment";
+                break;
+            case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+            case EXCEPTION_INT_DIVIDE_BY_ZERO:
+                exceptionName = "Divide by Zero";
+                break;
+            case EXCEPTION_STACK_OVERFLOW:
+                exceptionName = "Stack Overflow";
+                break;
+            default:
+                exceptionName = "Unknown Exception";
+        }
+
+        stream << "Exception Type: " << exceptionName << Qt::endl;
+        stream << "Exception Address: 0x" << QString::number((quintptr)pExceptionInfo->ExceptionRecord->ExceptionAddress, 16) << Qt::endl;
+        stream << Qt::endl;
+
+        crashLog.close();
+    }
+
+    // Show error message to user
+    MessageBoxW(NULL,
+                L"PDF Extractor GUI has encountered a critical error and needs to close.\n\n"
+                L"A crash log has been saved to the logs directory.\n"
+                L"Please restart the application.",
+                L"Application Error",
+                MB_OK | MB_ICONERROR);
+
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
+// Helper function to verify required resources
+bool verifyResources()
+{
+    QString appDir = QCoreApplication::applicationDirPath();
+
+    // Check if we can write to the application directory
+    QFileInfo appDirInfo(appDir);
+    if (!appDirInfo.isWritable()) {
+        qWarning() << "Application directory is not writable:" << appDir;
+        // Not fatal - we have fallback paths
+    }
+
+    // Log startup information
+    qDebug() << "Application started from:" << appDir;
+    qDebug() << "Current working directory:" << QDir::currentPath();
+    qDebug() << "Qt version:" << qVersion();
+
+    return true;
+}
+
+// Safe main function wrapper
+int safeMain(int argc, char *argv[])
+{
+    // Set up Qt platform paths before QApplication
+    QString appDir = QCoreApplication::applicationDirPath();
+
+#ifdef Q_OS_WIN
+    // Set DLL search path to application directory first
+    SetDllDirectoryW(reinterpret_cast<const wchar_t*>(appDir.utf16()));
+
+    // Also add to PATH for extra safety
+    QString currentPath = QString::fromLocal8Bit(qgetenv("PATH"));
+    QString newPath = appDir + ";" + currentPath;
+    qputenv("PATH", newPath.toLocal8Bit());
+#endif
+
+    // Add application directory to library paths for Qt plugins
+    QCoreApplication::addLibraryPath(appDir);
+    QCoreApplication::addLibraryPath(appDir + "/platforms");
+    QCoreApplication::addLibraryPath(appDir + "/styles");
+    QCoreApplication::addLibraryPath(appDir + "/imageformats");
+    QCoreApplication::addLibraryPath(appDir + "/sqldrivers");
+
+    // High DPI support is automatic in Qt 6
+
     QApplication app(argc, argv);
     QApplication::setApplicationName("PDF Extractor GUI");
     QApplication::setApplicationVersion("3.0");
+    QApplication::setOrganizationName("PDFExtractor");
 
-    PDFExtractorGUI window;
-    window.show();
+    // Set up logging
+    QLoggingCategory::setFilterRules("*.debug=true\n"
+                                     "qt.network.ssl.warning=false");
 
-    return app.exec();
+    // Verify resources
+    if (!verifyResources()) {
+        QMessageBox::critical(nullptr, "Startup Error",
+                            "Failed to verify required resources.\n"
+                            "Please check the application installation.");
+        return 1;
+    }
+
+    try {
+        PDFExtractorGUI window;
+        window.show();
+
+        return app.exec();
+    }
+    catch (const std::exception& e) {
+        QMessageBox::critical(nullptr, "Fatal Error",
+                            QString("An unexpected error occurred:\n%1").arg(e.what()));
+        return 1;
+    }
+    catch (...) {
+        QMessageBox::critical(nullptr, "Fatal Error",
+                            "An unknown fatal error occurred.");
+        return 1;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+#ifdef Q_OS_WIN
+    // Install Windows exception handler
+    SetUnhandledExceptionFilter(UnhandledExceptionHandler);
+
+    // Enable mini dumps for post-mortem debugging
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#endif
+
+    return safeMain(argc, argv);
 }
