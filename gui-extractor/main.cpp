@@ -878,6 +878,9 @@ private:
         );
         toolbar->addWidget(m_abortButton);
 
+        // Add small spacing between abort and settings buttons (similar to button spacing in tabs)
+        toolbar->addSpacing(5);
+
         // Settings button on the right with gear icon only
         m_settingsButton = new QPushButton("⚙");
         m_settingsButton->setFixedSize(28, 28);
