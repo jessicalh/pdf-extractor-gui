@@ -2,10 +2,13 @@
 build/
 debug/
 release/
+test_debug/
 minimal/
 minimal_deploy/
 standalone/
 static_test/
+release-console/
+debug-console/
 
 # Qt generated files
 *.moc
@@ -14,10 +17,14 @@ moc_*.h
 *.o
 *.obj
 *.pdb
-Makefile*
+Makefile
+Makefile.*
 .qmake.stash
 *.pro.user
 *.pro.user.*
+*.rc
+object_script.*
+*.res
 
 # Executables
 *.exe
