@@ -2,6 +2,10 @@
 
 ## PDF Extractor GUI Project
 
+### Testing Protocol
+
+**DO NOT CREATE TEST SCRIPTS** - When bringing up testing scenarios, assume the user is present and ready to test manually. Wait for user feedback on test results. Do not automate testing unless explicitly requested.
+
 ### IMPORTANT: UI Preservation Rules
 
 **DO NOT MODIFY THE USER INTERFACE** unless explicitly instructed by the user. This includes:

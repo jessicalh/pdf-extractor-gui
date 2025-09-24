@@ -42,6 +42,11 @@ public:
     ProcessingStage currentStage() const { return m_currentStage; }
     bool isProcessing() const { return m_currentStage != Idle && m_currentStage != Complete; }
 
+    // Control methods
+    void reset();    // Resets to Idle state for error recovery
+    void abort();    // User-initiated graceful cancellation
+    void processKeywordsOnly();  // Run just keyword extraction with current settings
+
     // Results access
     QString getExtractedText() const { return m_extractedText; }
     QString getSummary() const { return m_summary; }
@@ -54,6 +59,9 @@ signals:
     void stageChanged(ProcessingStage stage);
     void progressMessage(const QString& message);
     void errorOccurred(const QString& error);
+
+    // Control signals
+    void abortRequested();  // Signal to cancel operations
 
     // Result signals (emitted as each stage completes)
     void textExtracted(const QString& text);
@@ -70,6 +78,7 @@ private slots:
     void handleKeywordsResult(const QString& result);
     void handleRefinementResult(const QString& result);
     void handleRefinedKeywordsResult(const QString& result);
+    void handleQueryError(const QString& error);  // Centralized error handler
 
 private:
     // Text preparation
@@ -88,6 +97,9 @@ private:
     // Settings management
     void loadConnectionSettings();
     void loadPromptSettings();
+
+    // Helper methods
+    QString getStageString(ProcessingStage stage) const;
 
     // State
     ProcessingStage m_currentStage;
@@ -109,6 +121,9 @@ private:
 
     // PDF handling
     QPdfDocument* m_pdfDocument;
+
+    // Single-step mode flag
+    bool m_singleStepMode;
 
     // Settings cache
     struct Settings {

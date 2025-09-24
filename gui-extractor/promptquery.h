@@ -27,6 +27,9 @@ public:
     // Execute the query
     void execute(const QString& inputText);
 
+    // Control methods
+    void abort();  // Cancel current request
+
     // Virtual methods for customization
     virtual QString buildFullPrompt(const QString& text) = 0;
     virtual void processResponse(const QString& response) = 0;

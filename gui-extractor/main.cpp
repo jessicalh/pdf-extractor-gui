@@ -652,6 +652,7 @@ private:
     QPushButton *m_textAnalyzeButton;
 
     QPushButton *m_settingsButton;
+    QPushButton *m_abortButton;
     QLabel *m_statusLabel;
     QLabel *m_spinnerLabel;
     QTimer *m_spinnerTimer;
@@ -669,6 +670,7 @@ private:
     QPushButton *m_copyExtractedButton;
     QPushButton *m_copySummaryButton;
     QPushButton *m_copyKeywordsButton;
+    QPushButton *m_rerunKeywordsButton;
 
     // Core objects
     QueryRunner *m_queryRunner;
@@ -847,6 +849,34 @@ private:
         toolbar->setContentsMargins(5, 5, 5, 5);
 
         toolbar->addStretch();
+
+        // Abort button (stop sign) - only enabled during processing
+        m_abortButton = new QPushButton("🛑");  // Red stop sign emoji
+        m_abortButton->setFixedSize(28, 28);
+        m_abortButton->setToolTip("Stop Processing");
+        m_abortButton->setEnabled(false);  // Initially disabled
+        m_abortButton->setStyleSheet(
+            "QPushButton { "
+            "   font-size: 14px; "
+            "   border: 1px solid #ccc; "
+            "   border-radius: 3px; "
+            "   background-color: #f8f8f8; "
+            "}"
+            "QPushButton:hover:enabled { "
+            "   background-color: #ffcccc; "
+            "   border-color: #ff6666; "
+            "}"
+            "QPushButton:pressed:enabled { "
+            "   background-color: #ff9999; "
+            "   border-color: #ff3333; "
+            "}"
+            "QPushButton:disabled { "
+            "   color: #ccc; "
+            "   background-color: #f0f0f0; "
+            "   border-color: #ddd; "
+            "}"
+        );
+        toolbar->addWidget(m_abortButton);
 
         // Settings button on the right with gear icon only
         m_settingsButton = new QPushButton("⚙");
@@ -1064,6 +1094,14 @@ private:
         m_copyKeywordsButton->setToolTip("Copy to clipboard");
         m_copyKeywordsButton->setFixedSize(30, 30);
         keywordsButtonLayout->addWidget(m_copyKeywordsButton);
+
+        // Add re-run button
+        m_rerunKeywordsButton = new QPushButton();
+        m_rerunKeywordsButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+        m_rerunKeywordsButton->setToolTip("Re-run keyword extraction with current settings");
+        m_rerunKeywordsButton->setFixedSize(30, 30);
+        keywordsButtonLayout->addWidget(m_rerunKeywordsButton);
+
         keywordsButtonLayout->addStretch();
 
         keywordsMainLayout->addWidget(keywordsButtonColumn);
@@ -1168,8 +1206,20 @@ private:
             stopSpinner();
             updateStatus("Processing complete");
             m_resultsTabWidget->setCurrentIndex(1); // Show summary tab
+            m_abortButton->setEnabled(false);  // Ensure abort button is disabled
         });
         connect(m_settingsButton, &QPushButton::clicked, this, &PDFExtractorGUI::openSettings);
+
+        // Connect abort button
+        connect(m_abortButton, &QPushButton::clicked, [this]() {
+            if (m_queryRunner->isProcessing()) {
+                m_queryRunner->abort();
+                updateStatus("Processing cancelled");
+                setUIEnabled(true);
+                stopSpinner();
+                m_abortButton->setEnabled(false);
+            }
+        });
 
         // Connect copy buttons
         connect(m_copyExtractedButton, &QPushButton::clicked, [this]() {
@@ -1196,6 +1246,26 @@ private:
             QClipboard *clipboard = QApplication::clipboard();
             clipboard->setText(clipboardText);
             updateStatus("Summary copied to clipboard");
+        });
+
+        connect(m_rerunKeywordsButton, &QPushButton::clicked, [this]() {
+            // Check if we have extracted text
+            QString extractedText = m_extractedTextEdit->toPlainText();
+            if (extractedText.isEmpty()) {
+                QMessageBox::warning(this, "No Text Available",
+                    "Please extract text from a PDF or paste text first.");
+                return;
+            }
+
+            // Clear only the original keywords field
+            m_keywordsTextEdit->clear();
+
+            // Log what we're doing
+            m_logTextEdit->appendPlainText("\n=== RE-RUNNING KEYWORD EXTRACTION ===");
+            m_logTextEdit->appendPlainText("Using current keyword prompt from Settings");
+
+            // Run keyword extraction only
+            m_queryRunner->processKeywordsOnly();
         });
 
         connect(m_copyKeywordsButton, &QPushButton::clicked, [this]() {
@@ -1341,6 +1411,10 @@ private slots:
     }
 
     void handleStageChanged(QueryRunner::ProcessingStage stage) {
+        // Enable abort button when processing, disable when idle/complete
+        m_abortButton->setEnabled(stage != QueryRunner::Idle &&
+                                  stage != QueryRunner::Complete);
+
         QString stageText;
         switch (stage) {
             case QueryRunner::ExtractingText:
@@ -1370,10 +1444,18 @@ private slots:
 
     void handleError(const QString& error) {
         log("ERROR: " + error);
-        QMessageBox::critical(this, "Error", error);
+
+        // Don't show message box for timeouts - they're expected for large docs
+        if (!error.contains("timeout", Qt::CaseInsensitive)) {
+            QMessageBox::critical(this, "Error", error);
+        }
+
         setUIEnabled(true);
         stopSpinner();
-        updateStatus("Error occurred");
+        updateStatus("Ready - previous operation had errors");
+
+        // Abort button should be disabled after error
+        m_abortButton->setEnabled(false);
     }
 
     void clearResults() {

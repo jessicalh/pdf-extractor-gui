@@ -16,35 +16,42 @@ QueryRunner::QueryRunner(QObject *parent)
     , m_refineQuery(new RefineKeywordsQuery(this))
     , m_refinedKeywordsQuery(new KeywordsWithRefinementQuery(this))
     , m_pdfDocument(new QPdfDocument(this))
+    , m_singleStepMode(false)
 {
     // Connect query signals
     connect(m_summaryQuery, &PromptQuery::resultReady,
             this, &QueryRunner::handleSummaryResult);
     connect(m_summaryQuery, &PromptQuery::errorOccurred,
-            this, &QueryRunner::errorOccurred);
+            this, &QueryRunner::handleQueryError);
     connect(m_summaryQuery, &PromptQuery::progressUpdate,
             this, &QueryRunner::progressMessage);
 
     connect(m_keywordsQuery, &PromptQuery::resultReady,
             this, &QueryRunner::handleKeywordsResult);
     connect(m_keywordsQuery, &PromptQuery::errorOccurred,
-            this, &QueryRunner::errorOccurred);
+            this, &QueryRunner::handleQueryError);
     connect(m_keywordsQuery, &PromptQuery::progressUpdate,
             this, &QueryRunner::progressMessage);
 
     connect(m_refineQuery, &PromptQuery::resultReady,
             this, &QueryRunner::handleRefinementResult);
     connect(m_refineQuery, &PromptQuery::errorOccurred,
-            this, &QueryRunner::errorOccurred);
+            this, &QueryRunner::handleQueryError);
     connect(m_refineQuery, &PromptQuery::progressUpdate,
             this, &QueryRunner::progressMessage);
 
     connect(m_refinedKeywordsQuery, &PromptQuery::resultReady,
             this, &QueryRunner::handleRefinedKeywordsResult);
     connect(m_refinedKeywordsQuery, &PromptQuery::errorOccurred,
-            this, &QueryRunner::errorOccurred);
+            this, &QueryRunner::handleQueryError);
     connect(m_refinedKeywordsQuery, &PromptQuery::progressUpdate,
             this, &QueryRunner::progressMessage);
+
+    // Connect abort signal to all queries
+    connect(this, &QueryRunner::abortRequested, m_summaryQuery, &PromptQuery::abort);
+    connect(this, &QueryRunner::abortRequested, m_keywordsQuery, &PromptQuery::abort);
+    connect(this, &QueryRunner::abortRequested, m_refineQuery, &PromptQuery::abort);
+    connect(this, &QueryRunner::abortRequested, m_refinedKeywordsQuery, &PromptQuery::abort);
 
     // Load settings on creation
     loadSettingsFromDatabase();
@@ -58,10 +65,47 @@ QueryRunner::~QueryRunner() {
     // Other cleanup handled by QObject parent-child relationships
 }
 
+void QueryRunner::reset() {
+    m_currentStage = Idle;
+    emit stageChanged(m_currentStage);
+    emit progressMessage("Ready for new analysis");
+}
+
+void QueryRunner::abort() {
+    emit progressMessage("Aborting current operation...");
+    emit abortRequested();  // Tell queries to stop
+    reset();
+}
+
+void QueryRunner::processKeywordsOnly() {
+    // Check prerequisites
+    if (m_cleanedText.isEmpty()) {
+        emit errorOccurred("No text available for keyword extraction. Please extract or paste text first.");
+        return;
+    }
+
+    if (m_currentStage != Idle) {
+        emit progressMessage("Note: Resetting from previous operation");
+        reset();
+    }
+
+    // ALWAYS reload settings from database to get user's manual edits
+    loadSettingsFromDatabase();
+
+    emit progressMessage("=== RE-RUNNING KEYWORD EXTRACTION ===");
+    emit progressMessage("Using keyword prompt from Settings");
+
+    // Set single-step mode flag
+    m_singleStepMode = true;
+
+    // Run keyword extraction with fresh database settings
+    runKeywordExtraction();
+}
+
 void QueryRunner::processPDF(const QString& filePath) {
     if (m_currentStage != Idle) {
-        emit errorOccurred("Processing already in progress");
-        return;
+        emit progressMessage("Note: Resetting from previous incomplete operation");
+        reset();
     }
 
     m_currentStage = ExtractingText;
@@ -88,8 +132,8 @@ void QueryRunner::processPDF(const QString& filePath) {
 
 void QueryRunner::processText(const QString& text) {
     if (m_currentStage != Idle) {
-        emit errorOccurred("Processing already in progress");
-        return;
+        emit progressMessage("Note: Resetting from previous incomplete operation");
+        reset();
     }
 
     if (text.isEmpty()) {
@@ -317,7 +361,17 @@ void QueryRunner::handleSummaryResult(const QString& result) {
 void QueryRunner::handleKeywordsResult(const QString& result) {
     m_originalKeywords = result;
     emit keywordsExtracted(m_originalKeywords);
-    advanceToNextStage();
+
+    if (m_singleStepMode) {
+        // Single-step keyword extraction - don't advance
+        m_singleStepMode = false;  // Reset flag
+        m_currentStage = Idle;
+        emit stageChanged(m_currentStage);
+        emit progressMessage("Keyword re-extraction complete");
+    } else {
+        // Part of full pipeline - continue normally
+        advanceToNextStage();
+    }
 }
 
 void QueryRunner::handleRefinementResult(const QString& result) {
@@ -427,4 +481,39 @@ void QueryRunner::setManualSettings(const QVariantMap& settings) {
     if (settings.contains("modelName"))
         m_settings.modelName = settings["modelName"].toString();
     // ... etc for other settings as needed
+}
+
+void QueryRunner::handleQueryError(const QString& error) {
+    QString contextError = QString("[%1] %2")
+        .arg(getStageString(m_currentStage))
+        .arg(error);
+
+    // Check if it's a timeout - these are expected for large docs
+    bool isTimeout = error.contains("timeout", Qt::CaseInsensitive) ||
+                     error.contains("timed out", Qt::CaseInsensitive);
+
+    if (isTimeout) {
+        // Only log timeouts, don't show message box
+        emit progressMessage("WARNING: Request timed out - this is normal for large documents");
+        emit progressMessage("You can retry with a shorter document or adjust timeout in settings");
+    } else {
+        // Other errors get full treatment
+        emit errorOccurred(contextError);
+    }
+
+    // Always reset state so user can retry
+    reset();
+}
+
+QString QueryRunner::getStageString(ProcessingStage stage) const {
+    switch (stage) {
+        case Idle: return "Idle";
+        case ExtractingText: return "Extracting Text";
+        case GeneratingSummary: return "Generating Summary";
+        case ExtractingKeywords: return "Extracting Keywords";
+        case RefiningPrompt: return "Refining Prompt";
+        case ExtractingRefinedKeywords: return "Extracting Refined Keywords";
+        case Complete: return "Complete";
+        default: return "Unknown";
+    }
 }

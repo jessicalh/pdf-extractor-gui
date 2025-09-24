@@ -60,6 +60,17 @@ void PromptQuery::execute(const QString& inputText) {
     sendRequest(fullPrompt);
 }
 
+void PromptQuery::abort() {
+    if (m_currentReply && m_currentReply->isRunning()) {
+        m_currentReply->abort();
+        m_currentReply->deleteLater();
+        m_currentReply = nullptr;
+    }
+    if (m_timeoutTimer->isActive()) {
+        m_timeoutTimer->stop();
+    }
+}
+
 void PromptQuery::sendRequest(const QString& fullPrompt) {
     QJsonObject messageObj;
     messageObj["role"] = "user";
