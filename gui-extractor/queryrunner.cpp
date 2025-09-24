@@ -174,6 +174,9 @@ QString QueryRunner::removeCopyrightNotices(const QString& text) {
     result.remove(QRegularExpression("Licensed under.*\\n"));
     result.remove(QRegularExpression("This .* is licensed.*\\n"));
 
+    // Remove standalone license lines
+    result.remove(QRegularExpression("\\bLicense\\b.*\\n", QRegularExpression::CaseInsensitiveOption));
+
     return result;
 }
 
