@@ -42,6 +42,7 @@ protected:
     void sendRequest(const QString& fullPrompt);
     void handleNetworkReply();
     void handleTimeout();
+    QString removeHarmonyArtifacts(const QString& text);
 
     // Settings
     QString m_url;

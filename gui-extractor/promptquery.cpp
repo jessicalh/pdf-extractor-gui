@@ -225,6 +225,66 @@ void PromptQuery::handleTimeout() {
     }
 }
 
+QString PromptQuery::removeHarmonyArtifacts(const QString& text) {
+    QString cleaned = text;
+
+    // Check if text starts with <|start|> and has <|message|> within first 60 chars
+    if (cleaned.startsWith("<|start|>")) {
+        int messagePos = cleaned.indexOf("<|message|>", 0);
+        if (messagePos != -1 && messagePos <= 60) {
+            // Found Harmony header within 60 chars, remove it
+            QString removedSequence = cleaned.left(messagePos + 11); // +11 for "<|message|>"
+            cleaned = cleaned.mid(messagePos + 11);
+
+            // Log what we removed
+            emit progressUpdate(QString("Removed Harmony artifact: %1").arg(removedSequence));
+
+            // Also log to file for debugging
+            QFile logFile("harmony_artifacts.log");
+            if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                QTextStream stream(&logFile);
+                stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << " - ";
+                stream << "Removed: " << removedSequence << Qt::endl;
+                logFile.close();
+            }
+        }
+    }
+
+    // Check for orphaned end tags at the very end
+    if (cleaned.endsWith("<|end|>")) {
+        cleaned.chop(7); // Remove "<|end|>"
+        emit progressUpdate("Removed orphaned <|end|> tag at end of response");
+    } else if (cleaned.endsWith("<|return|>")) {
+        cleaned.chop(10); // Remove "<|return|>"
+        emit progressUpdate("Removed orphaned <|return|> tag at end of response");
+    }
+
+    // Also check for other common incomplete patterns at the end
+    // Pattern: <|start|> with no closing (at the very end)
+    int lastStart = cleaned.lastIndexOf("<|start|>");
+    if (lastStart != -1 && lastStart > cleaned.length() - 100) {
+        // Found <|start|> near the end, check if it's incomplete
+        QString tail = cleaned.mid(lastStart);
+        if (!tail.contains("<|message|>") && !tail.contains("<|end|>")) {
+            // Incomplete sequence at the end
+            QString removedSequence = tail;
+            cleaned = cleaned.left(lastStart);
+            emit progressUpdate(QString("Removed incomplete Harmony sequence at end: %1").arg(removedSequence));
+
+            // Log this too
+            QFile logFile("harmony_artifacts.log");
+            if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                QTextStream stream(&logFile);
+                stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << " - ";
+                stream << "Removed incomplete: " << removedSequence << Qt::endl;
+                logFile.close();
+            }
+        }
+    }
+
+    return cleaned.trimmed();
+}
+
 // ===== SUMMARY QUERY IMPLEMENTATION =====
 
 SummaryQuery::SummaryQuery(QObject *parent) : PromptQuery(parent) {}
@@ -247,7 +307,8 @@ QString SummaryQuery::buildFullPrompt(const QString& text) {
 }
 
 void SummaryQuery::processResponse(const QString& response) {
-    QString result = response.trimmed();
+    // Clean Harmony artifacts first
+    QString result = removeHarmonyArtifacts(response);
 
     // Check for "Not Evaluated" response
     if (result.compare("Not Evaluated", Qt::CaseInsensitive) == 0) {
@@ -285,7 +346,8 @@ QString KeywordsQuery::buildFullPrompt(const QString& text) {
 }
 
 void KeywordsQuery::processResponse(const QString& response) {
-    QString result = response.trimmed();
+    // Clean Harmony artifacts first
+    QString result = removeHarmonyArtifacts(response);
 
     // Check for "Not Evaluated" response
     if (result.compare("Not Evaluated", Qt::CaseInsensitive) == 0) {
@@ -344,7 +406,8 @@ QString RefineKeywordsQuery::buildFullPrompt(const QString& text) {
 }
 
 void RefineKeywordsQuery::processResponse(const QString& response) {
-    QString result = response.trimmed();
+    // Clean Harmony artifacts first
+    QString result = removeHarmonyArtifacts(response);
 
     // Check for "Not Evaluated" response
     if (result.compare("Not Evaluated", Qt::CaseInsensitive) == 0) {
