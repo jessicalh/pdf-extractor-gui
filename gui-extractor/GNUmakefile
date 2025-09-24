@@ -1,85 +1,131 @@
-# PDF Extractor GUI - Master Build Makefile
-# This wraps qmake-generated makefiles with convenient targets
+# PDF Extractor GUI - Master Build System
+# ========================================
+# Build configurations:
+#   - release         : Windows GUI (no console) - for end users
+#   - release-console : With console output - for Claude/debugging
+#   - debug          : Windows GUI with debug symbols
+#   - debug-console  : Debug with console output
+#
+# Usage:
+#   make              : Build release (default for users)
+#   make release-console : Build for Claude (with console)
+#   make all          : Build all 4 configurations
+#   make clean        : Clean all builds
+#   make help         : Show this help
 
 QMAKE = C:/Qt/6.10.0/llvm-mingw_64/bin/qmake.exe
 MAKE = mingw32-make
 WINDEPLOYQT = C:/Qt/6.10.0/llvm-mingw_64/bin/windeployqt.exe
 
-.PHONY: all console windows clean clean-all deploy deploy-console help
+.PHONY: all release release-console debug debug-console clean deploy help
 
-# Default target - build Windows GUI version
-all: windows
+# Default target - Release Windows GUI (for end users)
+all: release
 
-# Build console version (with debug output)
-console:
-	@echo "===== Building Console Version ====="
-	$(QMAKE) CONFIG+=console_build CONFIG+=release
-	$(MAKE) -f Makefile.Release
-	@echo "===== Console build complete: test_release/pdfextractor_gui_console.exe ====="
+# Release Windows GUI (no console) - Production build for end users
+release:
+	@echo "================================================"
+	@echo "Building Release Windows GUI (no console)"
+	@echo "Target: build/release/pdfextractor_gui.exe"
+	@echo "================================================"
+	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG-=console
+	@$(MAKE) -f Makefile.Release
+	@echo "Build complete: build/release/pdfextractor_gui.exe"
 
-# Build Windows GUI version (no console window)
-windows:
-	@echo "===== Building Windows GUI Version ====="
-	$(QMAKE) CONFIG+=release CONFIG-=console_build
-	$(MAKE) -f Makefile.Release
-	@echo "===== Windows build complete: release/pdfextractor_gui.exe ====="
+# Release with Console - For Claude/debugging
+release-console:
+	@echo "================================================"
+	@echo "Building Release with Console (for Claude/debug)"
+	@echo "Target: build/release-console/pdfextractor_gui_console.exe"
+	@echo "================================================"
+	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG+=console
+	@$(MAKE) -f Makefile.Release
+	@echo "Build complete: build/release-console/pdfextractor_gui_console.exe"
 
-# Build both versions
-both: console windows
+# Debug Windows GUI
+debug:
+	@echo "================================================"
+	@echo "Building Debug Windows GUI"
+	@echo "Target: build/debug/pdfextractor_gui_debug.exe"
+	@echo "================================================"
+	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG-=console
+	@$(MAKE) -f Makefile.Debug
+	@echo "Build complete: build/debug/pdfextractor_gui_debug.exe"
 
-# Clean current configuration
+# Debug with Console
+debug-console:
+	@echo "================================================"
+	@echo "Building Debug with Console"
+	@echo "Target: build/debug-console/pdfextractor_gui_debug_console.exe"
+	@echo "================================================"
+	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG+=console
+	@$(MAKE) -f Makefile.Debug
+	@echo "Build complete: build/debug-console/pdfextractor_gui_debug_console.exe"
+
+# Build all configurations
+all: release release-console debug debug-console
+	@echo "================================================"
+	@echo "All builds complete!"
+	@echo "Release: build/release/pdfextractor_gui.exe"
+	@echo "Release+Console: build/release-console/pdfextractor_gui_console.exe"
+	@echo "Debug: build/debug/pdfextractor_gui_debug.exe"
+	@echo "Debug+Console: build/debug-console/pdfextractor_gui_debug_console.exe"
+	@echo "================================================"
+
+# Deploy Qt dependencies for release build
+deploy: release
+	@echo "Deploying Qt dependencies for release..."
+	@cd build/release && $(WINDEPLOYQT) pdfextractor_gui.exe
+	@echo "Deployment complete"
+
+# Deploy Qt dependencies for Claude build
+deploy-claude: release-console
+	@echo "Deploying Qt dependencies for Claude build..."
+	@cd build/release-console && $(WINDEPLOYQT) pdfextractor_gui_console.exe
+	@echo "Deployment complete"
+
+# Clean all builds
 clean:
-	-$(MAKE) clean
-
-# Clean everything
-clean-all:
-	@echo "===== Cleaning all build artifacts ====="
-	-cmd /c "rmdir /s /q build 2>nul"
-	-cmd /c "rmdir /s /q test_release 2>nul"
-	-cmd /c "rmdir /s /q release 2>nul"
-	-cmd /c "del /q Makefile Makefile.* 2>nul"
-	-cmd /c "del /q .qmake.stash 2>nul"
-	@echo "===== Clean complete ====="
-
-# Deploy Qt dependencies for Windows build
-deploy: windows
-	@echo "===== Deploying Qt dependencies ====="
-	cd release && $(WINDEPLOYQT) pdfextractor_gui.exe
-	@echo "===== Deployment complete ====="
-
-# Deploy Qt dependencies for console build
-deploy-console: console
-	@echo "===== Deploying console dependencies ====="
-	@if not exist test_release mkdir test_release
-	xcopy /y release\*.dll test_release\ >nul 2>&1
-	xcopy /y /e release\platforms test_release\platforms\ >nul 2>&1
-	xcopy /y /e release\styles test_release\styles\ >nul 2>&1
-	xcopy /y /e release\imageformats test_release\imageformats\ >nul 2>&1
-	xcopy /y /e release\sqldrivers test_release\sqldrivers\ >nul 2>&1
-	@echo "===== Console deployment complete ====="
+	@echo "Cleaning all build artifacts..."
+	@cmd /c "if exist build rmdir /s /q build 2>nul"
+	@cmd /c "if exist Makefile del /q Makefile 2>nul"
+	@cmd /c "if exist Makefile.Debug del /q Makefile.Debug 2>nul"
+	@cmd /c "if exist Makefile.Release del /q Makefile.Release 2>nul"
+	@cmd /c "if exist .qmake.stash del /q .qmake.stash 2>nul"
+	@cmd /c "if exist object_script.*.Debug del /q object_script.*.Debug 2>nul"
+	@cmd /c "if exist object_script.*.Release del /q object_script.*.Release 2>nul"
+	@echo "Clean complete"
 
 # Show help
 help:
 	@echo "PDF Extractor GUI - Build System"
 	@echo "================================"
 	@echo ""
-	@echo "Available targets:"
-	@echo "  make              - Build Windows GUI version (default)"
-	@echo "  make console      - Build console version (with debug output)"
-	@echo "  make windows      - Build Windows GUI version (no console)"
-	@echo "  make both         - Build both versions"
-	@echo "  make deploy       - Build and deploy Windows version with Qt libraries"
-	@echo "  make deploy-console - Build and deploy console version with Qt libraries"
-	@echo "  make clean        - Clean current build"
-	@echo "  make clean-all    - Remove all build artifacts"
+	@echo "Quick Commands:"
+	@echo "  make              - Build release for Windows users (no console)"
+	@echo "  make release-console - Build for Claude/debugging (with console)"
+	@echo ""
+	@echo "All Build Targets:"
+	@echo "  make release      - Release Windows GUI (no console)"
+	@echo "  make release-console - Release with console output"
+	@echo "  make debug        - Debug Windows GUI"
+	@echo "  make debug-console - Debug with console output"
+	@echo "  make all          - Build all 4 configurations"
+	@echo ""
+	@echo "Deployment:"
+	@echo "  make deploy       - Deploy release build with Qt libraries"
+	@echo "  make deploy-claude - Deploy Claude build with Qt libraries"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  make clean        - Remove all build artifacts"
 	@echo "  make help         - Show this help"
 	@echo ""
-	@echo "Executables:"
-	@echo "  release/pdfextractor_gui.exe         - Windows GUI (no console)"
-	@echo "  test_release/pdfextractor_gui_console.exe - Console version (debug output)"
+	@echo "Output Directories:"
+	@echo "  build/release/        - Release Windows GUI"
+	@echo "  build/release-console/ - Release with console (Claude)"
+	@echo "  build/debug/          - Debug Windows GUI"
+	@echo "  build/debug-console/   - Debug with console"
 	@echo ""
-	@echo "Usage examples:"
-	@echo "  make              # Build Windows GUI version"
-	@echo "  make console      # Build console version for debugging"
-	@echo "  make both         # Build both versions"
-	@echo "  make clean-all && make both  # Full rebuild of both"
+	@echo "IMPORTANT FOR CLAUDE:"
+	@echo "  Always use: make release-console"
+	@echo "  This gives you console output for debugging"
