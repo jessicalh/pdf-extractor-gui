@@ -37,6 +37,8 @@ release:
 	@echo "================================================"
 	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG-=console
 	@$(MAKE) -f Makefile.Release
+	@echo "Deploying Qt dependencies..."
+	@cd build/release && $(WINDEPLOYQT) --no-translations pdfextractor_gui.exe
 	@echo "Build complete: build/release/pdfextractor_gui.exe"
 
 # Release with Console - For Claude/debugging
@@ -47,6 +49,8 @@ release-console:
 	@echo "================================================"
 	@$(QMAKE) CONFIG+=release CONFIG-=debug CONFIG+=console
 	@$(MAKE) -f Makefile.Release
+	@echo "Deploying Qt dependencies..."
+	@cd build/release-console && $(WINDEPLOYQT) --no-translations pdfextractor_gui_console.exe
 	@echo "Build complete: build/release-console/pdfextractor_gui_console.exe"
 
 # Debug Windows GUI
@@ -57,6 +61,8 @@ debug:
 	@echo "================================================"
 	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG-=console
 	@$(MAKE) -f Makefile.Debug
+	@echo "Deploying Qt dependencies..."
+	@cd build/debug && $(WINDEPLOYQT) --no-translations pdfextractor_gui_debug.exe
 	@echo "Build complete: build/debug/pdfextractor_gui_debug.exe"
 
 # Debug with Console
@@ -67,6 +73,8 @@ debug-console:
 	@echo "================================================"
 	@$(QMAKE) CONFIG+=debug CONFIG-=release CONFIG+=console
 	@$(MAKE) -f Makefile.Debug
+	@echo "Deploying Qt dependencies..."
+	@cd build/debug-console && $(WINDEPLOYQT) --no-translations pdfextractor_gui_debug_console.exe
 	@echo "Build complete: build/debug-console/pdfextractor_gui_debug_console.exe"
 
 # Build all configurations
@@ -79,17 +87,6 @@ all: release release-console debug debug-console
 	@echo "Debug+Console: build/debug-console/pdfextractor_gui_debug_console.exe"
 	@echo "================================================"
 
-# Deploy Qt dependencies for release build
-deploy: release
-	@echo "Deploying Qt dependencies for release..."
-	@cd build/release && $(WINDEPLOYQT) pdfextractor_gui.exe
-	@echo "Deployment complete"
-
-# Deploy Qt dependencies for Claude build
-deploy-claude: release-console
-	@echo "Deploying Qt dependencies for Claude build..."
-	@cd build/release-console && $(WINDEPLOYQT) pdfextractor_gui_console.exe
-	@echo "Deployment complete"
 
 # Clean all builds
 clean:
@@ -113,15 +110,11 @@ help:
 	@echo "  make release-console - Build for Claude/debugging (with console)"
 	@echo ""
 	@echo "All Build Targets:"
-	@echo "  make release      - Release Windows GUI (no console)"
-	@echo "  make release-console - Release with console output"
-	@echo "  make debug        - Debug Windows GUI"
-	@echo "  make debug-console - Debug with console output"
+	@echo "  make release      - Release Windows GUI (no console, auto-deploys DLLs)"
+	@echo "  make release-console - Release with console output (auto-deploys DLLs)"
+	@echo "  make debug        - Debug Windows GUI (auto-deploys DLLs)"
+	@echo "  make debug-console - Debug with console output (auto-deploys DLLs)"
 	@echo "  make all          - Build all 4 configurations"
-	@echo ""
-	@echo "Deployment:"
-	@echo "  make deploy       - Deploy release build with Qt libraries"
-	@echo "  make deploy-claude - Deploy Claude build with Qt libraries"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make clean        - Remove all build artifacts"
