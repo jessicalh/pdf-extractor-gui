@@ -8,6 +8,7 @@
 #include <QTextEdit>
 #include <QPlainTextEdit>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QLabel>
 #include <QFileDialog>
 #include <QTabWidget>
@@ -58,9 +59,10 @@
 #include <dbghelp.h>
 #endif
 #include "queryrunner.h"
+#include "modellistfetcher.h"
 
 // Default prompts for keyword refinement (new fields)
-const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- List each keyword only once (no duplicates)\n- Never create permutations or variations of existing words\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research\n- Return ONLY a comma-delimited list, nothing else\n- If no keywords are found, return nothing\n- Do not include explanations or additional text\n- Ensure the keyword list is sensible and relevant";
+const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research";
 
 const QString DEFAULT_KEYWORD_REFINEMENT_PREPROMPT = "You are an expert scientific information specialist and editorial assistant specializing in keyword optimization for academic research. Your role is to refine and improve keyword lists to ensure they accurately represent research content while maintaining consistency and precision. You help researchers create coherent keyword sets that improve discoverability and accurately categorize their work.\n\nConstraints:\n- Maintain all original specific terms that are accurate\n- Standardize terminology to accepted scientific conventions\n- Ensure keywords are neither too broad nor too narrow\n- Preserve domain-specific technical terms";
 
@@ -173,22 +175,8 @@ struct DefaultSettings {
     }
 
     static QString getKeywordPrompt() {
-        return "Extract and return a comma-delimited list containing: "
-               "organism names (species, genus), "
-               "chemicals (including specific proteins, enzymes, drugs, compounds), "
-               "statistical methods (test names, analysis techniques), "
-               "environmental factors (conditions, locations, habitats), "
-               "chemical reactions (reaction types, mechanisms), "
-               "computational methods (algorithms, models, software tools), "
-               "and research techniques (experimental methods, instruments).\n\n"
-               "Rules:\n"
-               "- Return ONLY a comma-delimited list, no other text\n"
-               "- List each keyword only once (no duplicates)\n"
-               "- Never create permutations or variations of words\n"
-               "- Use the shortest complete scientific form\n"
-               "- No explanations, titles, suffixes, or commentary\n"
-               "- If no relevant keywords found, return 'Not Evaluated'\n"
-               "- Ensure keywords are sensible and actually present in the text\n\n"
+        return "Extract and return a comma-delimited list containing: organism names (species, genus), chemicals (including specific proteins, enzymes, drugs, compounds), statistical methods (test names, analysis techniques), environmental factors (conditions, locations, habitats), chemical reactions (reaction types, mechanisms), computational methods (algorithms, models, software tools), and research techniques (experimental methods, instruments).\n\n"
+               "Format: Return only the shortest complete scientific form of each term, separated by commas. Do not include explanations, titles, or suffixes. If unable to extract relevant keywords from the text, return 'Not Evaluated'.\n\n"
                "Text:\n{text}";
     }
 
@@ -272,9 +260,25 @@ private:
         m_urlEdit->setPlaceholderText("http://127.0.0.1:8090/v1/chat/completions");
         formLayout->addRow("API URL:", m_urlEdit);
 
-        m_modelNameEdit = new QLineEdit();
-        m_modelNameEdit->setPlaceholderText("gpt-oss-120b");
-        formLayout->addRow("Model Name:", m_modelNameEdit);
+        // Model selection with combo box and refresh button
+        auto *modelLayout = new QHBoxLayout();
+        m_modelComboBox = new QComboBox();
+        m_modelComboBox->setEditable(true); // Allow manual entry
+        m_modelComboBox->setPlaceholderText("gpt-oss-120b");
+        modelLayout->addWidget(m_modelComboBox, 1);
+
+        m_refreshModelsButton = new QPushButton("🔄");
+        m_refreshModelsButton->setToolTip("Fetch available models from LM Studio");
+        m_refreshModelsButton->setFixedSize(28, 28);
+        modelLayout->addWidget(m_refreshModelsButton);
+
+        formLayout->addRow("Model Name:", modelLayout);
+
+        // Model fetcher
+        m_modelFetcher = new ModelListFetcher(this);
+        connect(m_modelFetcher, &ModelListFetcher::modelsReady, this, &SettingsDialog::handleModelsReady);
+        connect(m_modelFetcher, &ModelListFetcher::errorOccurred, this, &SettingsDialog::handleModelFetchError);
+        connect(m_refreshModelsButton, &QPushButton::clicked, this, &SettingsDialog::fetchModels);
 
         m_overallTimeoutEdit = new QSpinBox();
         m_overallTimeoutEdit->setRange(10000, 600000);
@@ -465,7 +469,7 @@ public:
         if (query.exec("SELECT * FROM settings LIMIT 1") && query.next()) {
             // Connection settings
             m_urlEdit->setText(query.value("url").toString());
-            m_modelNameEdit->setText(query.value("model_name").toString());
+            m_modelComboBox->setCurrentText(query.value("model_name").toString());
             m_overallTimeoutEdit->setValue(query.value("overall_timeout").toString().toInt());
 
             // Summary settings
@@ -517,7 +521,7 @@ public:
 
         // Connection settings
         query.bindValue(":url", m_urlEdit->text());
-        query.bindValue(":model_name", m_modelNameEdit->text());
+        query.bindValue(":model_name", m_modelComboBox->currentText());
         query.bindValue(":overall_timeout", QString::number(m_overallTimeoutEdit->value()));
 
         // Summary settings
@@ -548,10 +552,63 @@ public:
         }
     }
 
+    void fetchModels() {
+        // Get the base URL from the URL edit field
+        QString url = m_urlEdit->text();
+        if (url.isEmpty()) {
+            QMessageBox::warning(this, "No URL", "Please enter the API URL first.");
+            return;
+        }
+
+        // Extract base URL (remove /v1/chat/completions if present)
+        if (url.contains("/v1/chat/completions")) {
+            url = url.left(url.indexOf("/v1/chat/completions"));
+        }
+
+        // Disable button during fetch
+        m_refreshModelsButton->setEnabled(false);
+        m_refreshModelsButton->setText("⏳");
+
+        // Start fetching
+        m_modelFetcher->fetchModels(url);
+    }
+
+    void handleModelsReady(const QStringList& models) {
+        // Re-enable button
+        m_refreshModelsButton->setEnabled(true);
+        m_refreshModelsButton->setText("🔄");
+
+        // Save current text
+        QString currentModel = m_modelComboBox->currentText();
+
+        // Clear and populate combo box
+        m_modelComboBox->clear();
+        m_modelComboBox->addItems(models);
+
+        // Try to restore previous selection or set to first model
+        int index = m_modelComboBox->findText(currentModel);
+        if (index >= 0) {
+            m_modelComboBox->setCurrentIndex(index);
+        } else if (!models.isEmpty()) {
+            m_modelComboBox->setCurrentIndex(0);
+        }
+
+        QMessageBox::information(this, "Models Loaded",
+                                QString("Successfully loaded %1 model(s) from LM Studio.").arg(models.count()));
+    }
+
+    void handleModelFetchError(const QString& error) {
+        // Re-enable button
+        m_refreshModelsButton->setEnabled(true);
+        m_refreshModelsButton->setText("🔄");
+
+        QMessageBox::warning(this, "Model Fetch Error", error);
+    }
+
     void restoreDefaults() {
         // Connection defaults
         m_urlEdit->setText(DefaultSettings::URL);
-        m_modelNameEdit->setText(DefaultSettings::MODEL_NAME);
+        m_modelComboBox->setCurrentText(DefaultSettings::MODEL_NAME);
         m_overallTimeoutEdit->setValue(DefaultSettings::OVERALL_TIMEOUT);
 
         // Summary defaults
@@ -579,7 +636,9 @@ public:
 private:
     // Connection tab widgets
     QLineEdit *m_urlEdit;
-    QLineEdit *m_modelNameEdit;
+    QComboBox *m_modelComboBox;
+    QPushButton *m_refreshModelsButton;
+    ModelListFetcher *m_modelFetcher;
     QSpinBox *m_overallTimeoutEdit;
 
     // Summary tab widgets
@@ -1009,7 +1068,7 @@ private:
         summaryLayout->setSpacing(0);
 
         m_summaryTextEdit = new QTextEdit();
-        // Make editable so user can modify if needed
+        m_summaryTextEdit->setReadOnly(true);
         m_summaryTextEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 14px; line-height: 1.6; }");
         summaryLayout->addWidget(m_summaryTextEdit);
 
@@ -1062,7 +1121,7 @@ private:
         auto *suggestionsGroup = new QGroupBox("Suggested Prompt Improvements");
         auto *suggestionsLayout = new QVBoxLayout(suggestionsGroup);
         m_promptSuggestionsEdit = new QTextEdit();
-        // Make editable so user can modify if needed
+        m_promptSuggestionsEdit->setReadOnly(true);
         m_promptSuggestionsEdit->setStyleSheet("QTextEdit { font-family: 'Arial', sans-serif; font-size: 13px; }");
         suggestionsLayout->addWidget(m_promptSuggestionsEdit);
         keywordsSplitter->addWidget(suggestionsGroup);
@@ -1186,7 +1245,7 @@ private:
 
         connect(m_queryRunner, &QueryRunner::summaryGenerated, [this](const QString& summary) {
             QString cleanedSummary = stripAIArtifacts(summary);
-            m_summaryTextEdit->setPlainText(cleanedSummary);
+            m_summaryTextEdit->setMarkdown(cleanedSummary);
         });
 
         connect(m_queryRunner, &QueryRunner::keywordsExtracted, [this](const QString& keywords) {
@@ -1196,7 +1255,7 @@ private:
 
         connect(m_queryRunner, &QueryRunner::promptRefined, [this](const QString& prompt) {
             QString cleanedPrompt = stripAIArtifacts(prompt);
-            m_promptSuggestionsEdit->setPlainText(cleanedPrompt);
+            m_promptSuggestionsEdit->setMarkdown(cleanedPrompt);
         });
 
         connect(m_queryRunner, &QueryRunner::refinedKeywordsExtracted, [this](const QString& keywords) {
@@ -1215,12 +1274,41 @@ private:
 
         // Connect abort button
         connect(m_abortButton, &QPushButton::clicked, [this]() {
+            qDebug() << "Abort button clicked";
+
+            // Write to abort log file
+            QFile abortLog("abort_debug.log");
+            if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                QTextStream stream(&abortLog);
+                stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+                       << " - ABORT BUTTON CLICKED" << Qt::endl;
+                abortLog.close();
+            }
+
             if (m_queryRunner->isProcessing()) {
+                qDebug() << "QueryRunner is processing, calling abort...";
+                if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                    QTextStream stream(&abortLog);
+                    stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+                           << " - QueryRunner is processing, calling abort..." << Qt::endl;
+                    abortLog.close();
+                }
+
                 m_queryRunner->abort();
                 updateStatus("Processing cancelled");
                 setUIEnabled(true);
                 stopSpinner();
                 m_abortButton->setEnabled(false);
+
+                qDebug() << "Abort button handler complete";
+                if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                    QTextStream stream(&abortLog);
+                    stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+                           << " - Abort button handler complete" << Qt::endl;
+                    abortLog.close();
+                }
+            } else {
+                qDebug() << "QueryRunner not processing, ignoring abort";
             }
         });
 
@@ -1447,15 +1535,29 @@ private slots:
 
     void handleError(const QString& error) {
         log("ERROR: " + error);
+        qDebug() << "handleError called with:" << error;
 
-        // Don't show message box for timeouts - they're expected for large docs
-        if (!error.contains("timeout", Qt::CaseInsensitive)) {
+        // Don't show message box for expected errors
+        bool isTimeout = error.contains("timeout", Qt::CaseInsensitive);
+        bool isCanceled = error.contains("Operation canceled", Qt::CaseInsensitive) ||
+                          error.contains("aborted", Qt::CaseInsensitive) ||
+                          error.contains("cancelled", Qt::CaseInsensitive);
+
+        if (!isTimeout && !isCanceled) {
+            qDebug() << "Showing error message box";
             QMessageBox::critical(this, "Error", error);
+        } else {
+            qDebug() << "Suppressing message box for expected error (timeout/canceled)";
         }
 
         setUIEnabled(true);
         stopSpinner();
-        updateStatus("Ready - previous operation had errors");
+
+        if (isCanceled) {
+            updateStatus("Processing cancelled");
+        } else {
+            updateStatus("Ready - previous operation had errors");
+        }
 
         // Abort button should be disabled after error
         m_abortButton->setEnabled(false);

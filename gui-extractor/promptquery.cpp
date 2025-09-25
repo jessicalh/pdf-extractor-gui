@@ -61,13 +61,49 @@ void PromptQuery::execute(const QString& inputText) {
 }
 
 void PromptQuery::abort() {
-    if (m_currentReply && m_currentReply->isRunning()) {
-        m_currentReply->abort();
+    QString queryType = getQueryType();
+    qDebug() << "PromptQuery::abort() called for" << queryType;
+
+    // Write to abort log file
+    QFile abortLog("abort_debug.log");
+    if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&abortLog);
+        stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+               << " - PromptQuery::abort() called for " << queryType << Qt::endl;
+        abortLog.close();
+    }
+
+    if (m_currentReply) {
+        qDebug() << "  - Reply exists, isRunning:" << m_currentReply->isRunning();
+
+        // CRITICAL: Disconnect all signals before aborting to prevent callbacks
+        m_currentReply->disconnect();
+        qDebug() << "  - Disconnected signals from network reply";
+
+        if (m_currentReply->isRunning()) {
+            qDebug() << "  - Aborting network reply...";
+            m_currentReply->abort();
+            qDebug() << "  - Network reply aborted";
+        }
+
         m_currentReply->deleteLater();
         m_currentReply = nullptr;
+        qDebug() << "  - Network reply cleaned up";
+    } else {
+        qDebug() << "  - No active network reply";
     }
+
     if (m_timeoutTimer->isActive()) {
+        qDebug() << "  - Stopping timeout timer";
         m_timeoutTimer->stop();
+    }
+
+    qDebug() << "PromptQuery::abort() complete for" << queryType;
+    if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&abortLog);
+        stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+               << " - PromptQuery::abort() complete for " << queryType << Qt::endl;
+        abortLog.close();
     }
 }
 
@@ -132,7 +168,19 @@ void PromptQuery::handleNetworkReply() {
     }
 
     if (m_currentReply->error() != QNetworkReply::NoError) {
-        emit errorOccurred("Network error: " + m_currentReply->errorString());
+        QString errorString = m_currentReply->errorString();
+        qDebug() << "Network error in" << getQueryType() << ":" << errorString;
+
+        // Check if this was an intentional abort
+        if (m_currentReply->error() == QNetworkReply::OperationCanceledError) {
+            qDebug() << "  - This was an intentional abort, not emitting error signal";
+            // Don't emit error for intentional aborts
+            m_currentReply->deleteLater();
+            m_currentReply = nullptr;
+            return;
+        }
+
+        emit errorOccurred("Network error: " + errorString);
         m_currentReply->deleteLater();
         m_currentReply = nullptr;
         return;
@@ -185,35 +233,58 @@ void PromptQuery::handleNetworkReply() {
         return;
     }
 
+    // Extract <think> tags from content (if present)
+    QString thinkReasoning;
+    content = extractThinkTags(content, thinkReasoning);
+
     // Log the response to UI (simplified)
     emit progressUpdate(QString("=== %1 RESPONSE RECEIVED ===").arg(getQueryType().toUpper()));
 
-    // Only show reasoning to user, not the full content
+    // Show reasoning from both sources (gpt-oss reasoning field and <think> tags)
+    bool hasReasoning = false;
+
+    // First show gpt-oss style reasoning if present
     if (!reasoning.isEmpty()) {
-        emit progressUpdate("--- Model Reasoning ---");
+        emit progressUpdate("--- Model Reasoning (gpt-oss format) ---");
         emit progressUpdate(reasoning);
         emit progressUpdate("--- End Reasoning ---");
-    } else {
+        hasReasoning = true;
+    }
+
+    // Then show <think> tag reasoning if present
+    if (!thinkReasoning.isEmpty()) {
+        emit progressUpdate("--- Model Reasoning (<think> tags) ---");
+        emit progressUpdate(thinkReasoning);
+        emit progressUpdate("--- End Reasoning ---");
+        hasReasoning = true;
+    }
+
+    if (!hasReasoning) {
         emit progressUpdate("(No reasoning provided by model)");
     }
 
-    // Show abbreviated content preview
+    // Show abbreviated content preview (after think tags removed)
     if (!content.isEmpty()) {
         QString preview = content.left(100);
         if (content.length() > 100) preview += "...";
         emit progressUpdate(QString("Content preview: %1").arg(preview));
     }
 
-    // Write full response to lastrun.log (both content and reasoning)
+    // Write full response to lastrun.log (content and all reasoning)
     QFile logFile("lastrun.log");
     if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
         QTextStream stream(&logFile);
-        stream << "--- Response Content ---\n";
+        stream << "--- Response Content (after think tag removal) ---\n";
         stream << content << "\n";
         stream << "--- End Content ---\n";
         if (!reasoning.isEmpty()) {
-            stream << "--- Response Reasoning ---\n";
+            stream << "--- Response Reasoning (gpt-oss format) ---\n";
             stream << reasoning << "\n";
+            stream << "--- End Reasoning ---\n";
+        }
+        if (!thinkReasoning.isEmpty()) {
+            stream << "--- Response Reasoning (think tags) ---\n";
+            stream << thinkReasoning << "\n";
             stream << "--- End Reasoning ---\n";
         }
         logFile.close();
@@ -290,6 +361,60 @@ QString PromptQuery::removeHarmonyArtifacts(const QString& text) {
                 stream << "Removed incomplete: " << removedSequence << Qt::endl;
                 logFile.close();
             }
+        }
+    }
+
+    return cleaned.trimmed();
+}
+
+QString PromptQuery::extractThinkTags(const QString& text, QString& reasoning) {
+    QString cleaned = text;
+    reasoning.clear();
+
+    // Look for <think> ... </think> tags
+    int startPos = cleaned.indexOf("<think>");
+    if (startPos != -1) {
+        int endPos = cleaned.indexOf("</think>", startPos);
+        if (endPos != -1) {
+            // Extract the reasoning content
+            int contentStart = startPos + 7; // Length of "<think>"
+            int contentLength = endPos - contentStart;
+            reasoning = cleaned.mid(contentStart, contentLength).trimmed();
+
+            // Calculate how much to remove, checking for newline after </think>
+            int removeLength = endPos + 8 - startPos; // +8 for "</think>"
+
+            // Check if there's a newline immediately after </think>
+            int checkPos = endPos + 8;
+            if (checkPos < cleaned.length()) {
+                if (cleaned[checkPos] == '\n') {
+                    removeLength++; // Also remove the newline
+                    emit progressUpdate("Found and removed newline after </think> tag");
+                } else if (cleaned[checkPos] == '\r' && checkPos + 1 < cleaned.length() && cleaned[checkPos + 1] == '\n') {
+                    removeLength += 2; // Remove \r\n
+                    emit progressUpdate("Found and removed \\r\\n after </think> tag");
+                }
+            }
+
+            // Remove the entire <think>...</think> block (and optional newline) from the main text
+            cleaned.remove(startPos, removeLength);
+
+            // Log what we found
+            emit progressUpdate(QString("Found and extracted <think> block (%1 characters)").arg(reasoning.length()));
+
+            // Also log to file for debugging
+            QFile logFile("think_tags.log");
+            if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                QTextStream stream(&logFile);
+                stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << " - ";
+                stream << getQueryType() << " - Extracted think content:\n";
+                stream << reasoning << "\n";
+                stream << "--- End Think Content ---\n";
+                logFile.close();
+            }
+        } else {
+            // Found opening <think> but no closing tag
+            emit progressUpdate("Warning: Found <think> tag without closing </think>");
         }
     }
 

@@ -72,9 +72,36 @@ void QueryRunner::reset() {
 }
 
 void QueryRunner::abort() {
+    QString stage = getStageString(m_currentStage);
+    qDebug() << "QueryRunner::abort() called at stage:" << stage;
+
+    // Write to abort log file for debugging hangs
+    QFile abortLog("abort_debug.log");
+    if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&abortLog);
+        stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+               << " - QueryRunner::abort() called at stage: " << stage << Qt::endl;
+        abortLog.close();
+    }
+
     emit progressMessage("Aborting current operation...");
+
+    // Set flag to prevent further processing
+    m_singleStepMode = false;
+
+    qDebug() << "Emitting abortRequested signal...";
     emit abortRequested();  // Tell queries to stop
+
+    qDebug() << "Calling reset()...";
     reset();
+
+    qDebug() << "QueryRunner::abort() complete";
+    if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&abortLog);
+        stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+               << " - QueryRunner::abort() complete" << Qt::endl;
+        abortLog.close();
+    }
 }
 
 void QueryRunner::processKeywordsOnly() {

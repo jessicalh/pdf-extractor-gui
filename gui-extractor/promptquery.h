@@ -46,6 +46,7 @@ protected:
     void handleNetworkReply();
     void handleTimeout();
     QString removeHarmonyArtifacts(const QString& text);
+    QString extractThinkTags(const QString& text, QString& reasoning);
 
     // Settings
     QString m_url;
