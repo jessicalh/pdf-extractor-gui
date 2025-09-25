@@ -134,7 +134,7 @@ struct DefaultSettings {
     // Connection defaults
     static constexpr const char* URL = "http://127.0.0.1:8090/v1/chat/completions";
     static constexpr const char* MODEL_NAME = "gpt-oss-120b";
-    static constexpr int OVERALL_TIMEOUT = 900000;  // 15 minutes
+    static constexpr int OVERALL_TIMEOUT = 1800000;  // 30 minutes
 
     // Text processing defaults
     static constexpr int TEXT_TRUNCATION_LIMIT = 100000;  // 100k characters
@@ -142,17 +142,17 @@ struct DefaultSettings {
     // Summary defaults
     static constexpr double SUMMARY_TEMPERATURE = 0.7;
     static constexpr int SUMMARY_CONTEXT_LENGTH = 16000;  // 16k context
-    static constexpr int SUMMARY_TIMEOUT = 900000;  // 15 minutes
+    static constexpr int SUMMARY_TIMEOUT = 1800000;  // 30 minutes
 
     // Keyword defaults
     static constexpr double KEYWORD_TEMPERATURE = 0.6;  // Minimum 0.6 to avoid weird outputs
     static constexpr int KEYWORD_CONTEXT_LENGTH = 16000;  // 16k context
-    static constexpr int KEYWORD_TIMEOUT = 900000;  // 15 minutes
+    static constexpr int KEYWORD_TIMEOUT = 1800000;  // 30 minutes
 
     // Refinement defaults
     static constexpr double REFINEMENT_TEMPERATURE = 0.8;
     static constexpr int REFINEMENT_CONTEXT_LENGTH = 16000;  // 16k context
-    static constexpr int REFINEMENT_TIMEOUT = 900000;  // 15 minutes
+    static constexpr int REFINEMENT_TIMEOUT = 1800000;  // 30 minutes
 
     // Default prompts are defined in the functions below
     static QString getSummaryPreprompt() {
@@ -281,10 +281,10 @@ private:
         connect(m_refreshModelsButton, &QPushButton::clicked, this, &SettingsDialog::fetchModels);
 
         m_overallTimeoutEdit = new QSpinBox();
-        m_overallTimeoutEdit->setRange(10000, 600000);
+        m_overallTimeoutEdit->setRange(10000, INT_MAX);  // No upper limit
         m_overallTimeoutEdit->setSingleStep(10000);
         m_overallTimeoutEdit->setSuffix(" ms");
-        m_overallTimeoutEdit->setValue(600000);
+        m_overallTimeoutEdit->setValue(DefaultSettings::OVERALL_TIMEOUT);
         formLayout->addRow("Overall Timeout:", m_overallTimeoutEdit);
 
         layout->addLayout(formLayout);
@@ -317,10 +317,10 @@ private:
 
         settingsLayout->addWidget(new QLabel("Timeout:"));
         m_summaryTimeoutEdit = new QSpinBox();
-        m_summaryTimeoutEdit->setRange(10000, 600000);
+        m_summaryTimeoutEdit->setRange(10000, INT_MAX);  // No upper limit
         m_summaryTimeoutEdit->setSingleStep(10000);
         m_summaryTimeoutEdit->setSuffix(" ms");
-        m_summaryTimeoutEdit->setValue(600000);
+        m_summaryTimeoutEdit->setValue(DefaultSettings::SUMMARY_TIMEOUT);
         settingsLayout->addWidget(m_summaryTimeoutEdit);
 
         settingsLayout->addStretch();
@@ -373,10 +373,10 @@ private:
 
         settingsLayout->addWidget(new QLabel("Timeout:"));
         m_keywordTimeoutEdit = new QSpinBox();
-        m_keywordTimeoutEdit->setRange(10000, 600000);
+        m_keywordTimeoutEdit->setRange(10000, INT_MAX);  // No upper limit
         m_keywordTimeoutEdit->setSingleStep(10000);
         m_keywordTimeoutEdit->setSuffix(" ms");
-        m_keywordTimeoutEdit->setValue(600000);
+        m_keywordTimeoutEdit->setValue(DefaultSettings::KEYWORD_TIMEOUT);
         settingsLayout->addWidget(m_keywordTimeoutEdit);
 
         settingsLayout->addStretch();
@@ -429,10 +429,10 @@ private:
 
         settingsLayout->addWidget(new QLabel("Timeout:"));
         m_refinementTimeoutEdit = new QSpinBox();
-        m_refinementTimeoutEdit->setRange(1000, 600000);
+        m_refinementTimeoutEdit->setRange(1000, INT_MAX);  // No upper limit
         m_refinementTimeoutEdit->setSingleStep(1000);
         m_refinementTimeoutEdit->setSuffix(" ms");
-        m_refinementTimeoutEdit->setValue(600000);
+        m_refinementTimeoutEdit->setValue(DefaultSettings::REFINEMENT_TIMEOUT);
         settingsLayout->addWidget(m_refinementTimeoutEdit);
         settingsLayout->addStretch();
         layout->addLayout(settingsLayout);
