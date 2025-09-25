@@ -556,7 +556,9 @@ public:
         // Get the base URL from the URL edit field
         QString url = m_urlEdit->text();
         if (url.isEmpty()) {
-            QMessageBox::warning(this, "No URL", "Please enter the API URL first.");
+            // Just update the status label instead of showing a message box
+            m_modelComboBox->clear();
+            m_modelComboBox->addItem("Please enter API URL first");
             return;
         }
 
@@ -593,8 +595,8 @@ public:
             m_modelComboBox->setCurrentIndex(0);
         }
 
-        QMessageBox::information(this, "Models Loaded",
-                                QString("Successfully loaded %1 model(s) from LM Studio.").arg(models.count()));
+        // Just update the combo box, no need for a message box
+        qDebug() << "Successfully loaded" << models.count() << "model(s) from LM Studio.";
     }
 
     void handleModelFetchError(const QString& error) {
@@ -602,7 +604,10 @@ public:
         m_refreshModelsButton->setEnabled(true);
         m_refreshModelsButton->setText("🔄");
 
-        QMessageBox::warning(this, "Model Fetch Error", error);
+        // Show error in the combo box instead of a message box
+        m_modelComboBox->clear();
+        m_modelComboBox->addItem("Error: " + error);
+        qDebug() << "Model fetch error:" << error;
     }
 
     void restoreDefaults() {
@@ -1343,8 +1348,8 @@ private:
             // Check if we have extracted text
             QString extractedText = m_extractedTextEdit->toPlainText();
             if (extractedText.isEmpty()) {
-                QMessageBox::warning(this, "No Text Available",
-                    "Please extract text from a PDF or paste text first.");
+                updateStatus("No text available - extract from PDF or paste text first");
+                log("ERROR: Cannot re-run keywords - no text available");
                 return;
             }
 
@@ -1447,12 +1452,12 @@ private slots:
     void analyzePDF() {
         QString pdfPath = m_filePathEdit->text();
         if (pdfPath.isEmpty()) {
-            QMessageBox::warning(this, "Warning", "Please select a PDF file first.");
+            updateStatus("Please select a PDF file first");
             return;
         }
 
         if (m_queryRunner->isProcessing()) {
-            QMessageBox::warning(this, "Warning", "Processing already in progress.");
+            updateStatus("Processing already in progress");
             return;
         }
 
@@ -1471,12 +1476,12 @@ private slots:
     void analyzeText() {
         QString text = m_pasteTextEdit->toPlainText();
         if (text.isEmpty()) {
-            QMessageBox::warning(this, "Warning", "Please paste some text first.");
+            updateStatus("Please paste some text first");
             return;
         }
 
         if (m_queryRunner->isProcessing()) {
-            QMessageBox::warning(this, "Warning", "Processing already in progress.");
+            updateStatus("Processing already in progress");
             return;
         }
 
@@ -1534,29 +1539,26 @@ private slots:
     }
 
     void handleError(const QString& error) {
+        // Log error to the output log
         log("ERROR: " + error);
         qDebug() << "handleError called with:" << error;
 
-        // Don't show message box for expected errors
+        // Always re-enable UI
+        setUIEnabled(true);
+        stopSpinner();
+
+        // Update status bar based on error type
         bool isTimeout = error.contains("timeout", Qt::CaseInsensitive);
         bool isCanceled = error.contains("Operation canceled", Qt::CaseInsensitive) ||
                           error.contains("aborted", Qt::CaseInsensitive) ||
                           error.contains("cancelled", Qt::CaseInsensitive);
 
-        if (!isTimeout && !isCanceled) {
-            qDebug() << "Showing error message box";
-            QMessageBox::critical(this, "Error", error);
-        } else {
-            qDebug() << "Suppressing message box for expected error (timeout/canceled)";
-        }
-
-        setUIEnabled(true);
-        stopSpinner();
-
         if (isCanceled) {
             updateStatus("Processing cancelled");
+        } else if (isTimeout) {
+            updateStatus("Request timed out - ready to retry");
         } else {
-            updateStatus("Ready - previous operation had errors");
+            updateStatus("Error occurred - check log for details");
         }
 
         // Abort button should be disabled after error

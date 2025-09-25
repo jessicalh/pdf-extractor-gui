@@ -520,13 +520,13 @@ void QueryRunner::handleQueryError(const QString& error) {
                      error.contains("timed out", Qt::CaseInsensitive);
 
     if (isTimeout) {
-        // Only log timeouts, don't show message box
+        // Log timeouts with special message
         emit progressMessage("WARNING: Request timed out - this is normal for large documents");
         emit progressMessage("You can retry with a shorter document or adjust timeout in settings");
-    } else {
-        // Other errors get full treatment
-        emit errorOccurred(contextError);
     }
+
+    // ALWAYS emit errorOccurred so UI gets re-enabled
+    emit errorOccurred(contextError);
 
     // Always reset state so user can retry
     reset();
