@@ -62,7 +62,7 @@
 #include "modellistfetcher.h"
 
 // Default prompts for keyword refinement (new fields)
-const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract precise, domain-specific keywords from academic and scientific texts. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research.\n\nConstraints:\n- Extract only the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms\n- Focus on unique identifiers of the research";
+const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract all of the candidates for precise, domain-specific keywords from academic and scientific texts before they are reviewed by a final editor. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research. Your breadth of knowledge about science, maths, and statistics insures that the words are well collected and your skill as a reader and editor means you will not miss any words.\n\nConstraints:\n- Extract  the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms";
 
 const QString DEFAULT_KEYWORD_REFINEMENT_PREPROMPT = "You are an expert scientific information specialist and editorial assistant specializing in keyword optimization for academic research. Your role is to refine and improve keyword lists to ensure they accurately represent research content while maintaining consistency and precision. You help researchers create coherent keyword sets that improve discoverability and accurately categorize their work.\n\nConstraints:\n- Maintain all original specific terms that are accurate\n- Standardize terminology to accepted scientific conventions\n- Ensure keywords are neither too broad nor too narrow\n- Preserve domain-specific technical terms";
 
@@ -140,12 +140,12 @@ struct DefaultSettings {
     static constexpr int TEXT_TRUNCATION_LIMIT = 100000;  // 100k characters
 
     // Summary defaults
-    static constexpr double SUMMARY_TEMPERATURE = 0.7;
+    static constexpr double SUMMARY_TEMPERATURE = 0.8;
     static constexpr int SUMMARY_CONTEXT_LENGTH = 16000;  // 16k context
     static constexpr int SUMMARY_TIMEOUT = 1800000;  // 30 minutes
 
     // Keyword defaults
-    static constexpr double KEYWORD_TEMPERATURE = 0.6;  // Minimum 0.6 to avoid weird outputs
+    static constexpr double KEYWORD_TEMPERATURE = 0.8;
     static constexpr int KEYWORD_CONTEXT_LENGTH = 16000;  // 16k context
     static constexpr int KEYWORD_TIMEOUT = 1800000;  // 30 minutes
 
@@ -156,17 +156,18 @@ struct DefaultSettings {
 
     // Default prompts are defined in the functions below
     static QString getSummaryPreprompt() {
-        return "You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet concise research overviews to principal investigators and research teams preparing literature reviews. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context.\n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'";
+        return "You are a senior academic research assistant with expertise in scientific literature analysis. Your role is to provide comprehensive yet fairly concise research overviews to principal investigators and research teams preparing literature reviews.  Research teams include everyone from the head researcher to the new intern, so you shoud be concise in selection of points and use both the technical description and everyday english to describe each point. You specialize in identifying key contributions, methodological approaches, and the significance of research findings within the broader scientific context. \n\nConstraints:\n- Focus on objective, factual content\n- Emphasize novel contributions and methodologies\n- Maintain academic tone and precision\n- Highlight connections to existing literature\n- If unable to adequately evaluate the text, return 'Not Evaluated'";
     }
 
     static QString getSummaryPrompt() {
-        return "Please provide a summary:\n"
-               "1. Main research question or hypothesis\n"
-               "2. Key findings (3-5 bullet points with specific results)\n"
-               "3. Methodology and approach used\n"
-               "4. Significance and contribution to the field\n"
-               "5. Potential applications, implications, or future directions\n\n"
-               "Be concise yet comprehensive. Focus on information valuable for literature review inclusion. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
+        return "Please provide a summary, clearly labeled under the follwing areas with bullet points below each.  The top level item should can simply be a title, with a space under each section. \n\n"
+               "1. Motivation in the literature, if avaliable\n"
+               "2. Main research question or hypothesis\n"
+               "3. Key findings (3-5 bullet points) with specific results\n"
+               "4. Methodology and approach used\n"
+               "5. Significance and contribution to the field\n"
+               "6. Potential applications, implications, or future directions\n\n"
+               "Be concise yet comprehensive. Focus on information valuable for literature review inclusion and also material necessary for basic understanding to a scientist from a related discipline. Do not include a title or preamble in your response. If unable to evaluate based on the provided text, respond only with 'Not Evaluated'.\n\n"
                "Text:\n{text}";
     }
 
@@ -175,9 +176,12 @@ struct DefaultSettings {
     }
 
     static QString getKeywordPrompt() {
-        return "Extract and return a comma-delimited list containing: organism names (species, genus), chemicals (including specific proteins, enzymes, drugs, compounds), statistical methods (test names, analysis techniques), environmental factors (conditions, locations, habitats), chemical reactions (reaction types, mechanisms), computational methods (algorithms, models, software tools), and research techniques (experimental methods, instruments).\n\n"
-               "Format: Return only the shortest complete scientific form of each term, separated by commas. Do not include explanations, titles, or suffixes. If unable to extract relevant keywords from the text, return 'Not Evaluated'.\n\n"
-               "Text:\n{text}";
+        return "Extract and return a comma-delimited list containing: organism names (species, genus), chemicals (including specific proteins, enzymes, drugs, compounds, ligands), statistical methods (test names, analysis techniques, models), environmental factors (conditions, locations, habitats), chemical reactions (reaction types, mechanisms, proteins and ligands, enzymes etc), computational methods (algorithms, models, software tools, ways of looking at the data, etc), and research techniques (experimental methods, tools,  instruments, sofware tools, algorithms, types of microscopy or crystallography etc). Your keywords will be used to search for specific compounds and methods in the literature so missing one can result in the loss of that article's information.\n\n"
+               "Keyword list should include keywords for what was being assesed, in material and conceptual terms.  If such keyword is something like \"temperature\" or \"mass\" then the keyword should be two words, with the modifier expressing what was measured or acted on in the study, in the form which best characterises what was done in terms of study methods and goals.  Example: temperature alone is useless, but phase-change temperature is helpful\n\n"
+               "Do not include quantitative values in parenthesis after proposed keyword.  \n\n"
+               "If you must choose between a short (under 50 character) full term and the acroynm, choose the term full term.  If you have an acroynm and know what it means from context, use the full term with the acroym in parentheses.\n\n"
+               "Format: Return only the shortest complete scientific form of each term (subject to above constraints), separated by commas. Do not include explanations, titles, or suffixes. Re-evaluate the final submission to insure it has no duplicates, irrespective of case or punctuation.  If you do not have the names of the fundamental material or biological entities under examination (the protein, the ligand, the compound) then -- unless this is a study of a new type of methodology -- you need to make sure you look again and add them without dupl;ication. If you are missing the key things meaured by the study, as keywords, you need to look again and add them, without duplication, subject to constraints already described. If unable to extract relevant keywords from the text or summary, return 'Not Evaluated'.\n\n"
+               "Text, for extraction of keywords as described above:\n{text}\n\n";
     }
 
     static QString getKeywordRefinementPreprompt() {

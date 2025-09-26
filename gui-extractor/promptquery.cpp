@@ -12,7 +12,7 @@
 
 PromptQuery::PromptQuery(QObject *parent)
     : QObject(parent)
-    , m_temperature(0.7)
+    , m_temperature(0.8)
     , m_contextLength(8000)
     , m_timeout(120000)
     , m_networkManager(new QNetworkAccessManager(this))
