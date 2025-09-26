@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QMainWindow>
+#include "safepdfloader.h"
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -60,6 +61,10 @@
 #endif
 #include "queryrunner.h"
 #include "modellistfetcher.h"
+#include "zoteroinput.h"
+#include <QFileInfo>
+#include <exception>
+#include <stdexcept>
 
 // Default prompts for keyword refinement (new fields)
 const QString DEFAULT_KEYWORD_PREPROMPT = "You are an expert scientific information specialist and keyword extraction researcher. Your role is to identify and extract all of the candidates for precise, domain-specific keywords from academic and scientific texts before they are reviewed by a final editor. You have extensive knowledge of scientific nomenclature, research methodologies, and technical terminology across multiple disciplines. You are systematic, thorough, and precise in identifying the most relevant and specific terms that characterize the research. Your breadth of knowledge about science, maths, and statistics insures that the words are well collected and your skill as a reader and editor means you will not miss any words.\n\nConstraints:\n- Extract  the most specific and relevant terms\n- Use standard scientific nomenclature\n- Avoid generic or overly broad terms";
@@ -423,20 +428,15 @@ private:
         auto *headerLabel = new QLabel("<h3>Zotero API Configuration</h3>");
         formLayout->addRow(headerLabel);
 
-        m_zoteroUserIdEdit = new QLineEdit();
-        m_zoteroUserIdEdit->setPlaceholderText("Enter your Zotero User ID");
-        formLayout->addRow("User ID:", m_zoteroUserIdEdit);
-
         m_zoteroApiKeyEdit = new QLineEdit();
         m_zoteroApiKeyEdit->setPlaceholderText("Enter your Zotero API Key");
         m_zoteroApiKeyEdit->setEchoMode(QLineEdit::Password);
         formLayout->addRow("API Key:", m_zoteroApiKeyEdit);
 
-        auto *helpLabel = new QLabel("<i>To obtain your Zotero credentials:<br>"
+        auto *helpLabel = new QLabel("<i>To obtain your Zotero API key:<br>"
                                     "1. Log in to zotero.org<br>"
                                     "2. Go to Settings → Feeds/API<br>"
-                                    "3. Create a new API key with library access<br>"
-                                    "4. Your User ID is shown on the same page</i>");
+                                    "3. Create a new API key with library access</i>");
         helpLabel->setWordWrap(true);
         formLayout->addRow("", helpLabel);
 
@@ -545,7 +545,7 @@ public:
             m_prepromptRefinementPromptEdit->setPlainText(query.value("preprompt_refinement_prompt").toString());
 
             // Zotero settings
-            m_zoteroUserIdEdit->setText(query.value("zotero_user_id").toString());
+            // User ID will be fetched automatically from API
             m_zoteroApiKeyEdit->setText(query.value("zotero_api_key").toString());
         }
     }
@@ -605,7 +605,8 @@ public:
         query.bindValue(":preprompt_refinement_prompt", m_prepromptRefinementPromptEdit->toPlainText());
 
         // Zotero settings
-        query.bindValue(":zotero_user_id", m_zoteroUserIdEdit->text());
+        // User ID will be fetched and saved when API key is validated
+        query.bindValue(":zotero_user_id", query.value("zotero_user_id").toString());
         query.bindValue(":zotero_api_key", m_zoteroApiKeyEdit->text());
 
         if (!query.exec()) {
@@ -702,7 +703,6 @@ public:
         m_prepromptRefinementPromptEdit->setPlainText(DefaultSettings::getPrepromptRefinementPrompt());
 
         // Zotero defaults (empty by default as these are user-specific)
-        m_zoteroUserIdEdit->clear();
         m_zoteroApiKeyEdit->clear();
     }
 
@@ -737,7 +737,6 @@ private:
     QTextEdit *m_prepromptRefinementPromptEdit;
 
     // Zotero tab widgets
-    QLineEdit *m_zoteroUserIdEdit;
     QLineEdit *m_zoteroApiKeyEdit;
 };
 
@@ -787,6 +786,8 @@ private:
 
     QTextEdit *m_pasteTextEdit;
     QPushButton *m_textAnalyzeButton;
+
+    ZoteroInputWidget *m_zoteroInputWidget;
 
     QPushButton *m_settingsButton;
     QPushButton *m_abortButton;
@@ -1131,6 +1132,10 @@ private:
 
         m_inputTabWidget->addTab(textTab, "Paste Text");
 
+        // Zotero Tab
+        m_zoteroInputWidget = new ZoteroInputWidget();
+        m_inputTabWidget->addTab(m_zoteroInputWidget, "Zotero");
+
         inputLayout->addWidget(m_inputTabWidget);
         m_mainTabWidget->addTab(inputTab, "📥 Input");
 
@@ -1344,6 +1349,23 @@ private:
         connect(m_browseButton, &QPushButton::clicked, this, &PDFExtractorGUI::browseForPDF);
         connect(m_pdfAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzePDF);
         connect(m_textAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzeText);
+
+        // Connect Zotero widget signals
+        connect(m_zoteroInputWidget, &ZoteroInputWidget::analyzeRequested, [this]() {
+            QString pdfPath = m_zoteroInputWidget->getPdfPath();
+            if (!pdfPath.isEmpty()) {
+                analyzeZoteroPdf(pdfPath);
+            }
+        });
+
+        connect(m_zoteroInputWidget, &ZoteroInputWidget::statusMessage, [this](const QString& msg) {
+            updateStatus(msg);
+            log(msg);
+        });
+
+        connect(m_zoteroInputWidget, &ZoteroInputWidget::errorOccurred, [this](const QString& error) {
+            handleError(error);
+        });
 
         // Connect QueryRunner signals to UI updates
         connect(m_queryRunner, &QueryRunner::stageChanged, this, &PDFExtractorGUI::handleStageChanged);
@@ -1610,11 +1632,73 @@ private slots:
         m_queryRunner->processText(text);
     }
 
+    void analyzeZoteroPdf(const QString& pdfPath) {
+        try {
+            if (pdfPath.isEmpty()) {
+                throw std::invalid_argument("Empty PDF path");
+            }
+
+            // Validate file exists and is readable
+            QFileInfo fileInfo(pdfPath);
+            if (!fileInfo.exists()) {
+                throw std::runtime_error("PDF file does not exist");
+            }
+            if (!fileInfo.isReadable()) {
+                throw std::runtime_error("PDF file is not readable");
+            }
+
+            // Check file size
+            if (!SafePdfLoader::checkFileSize(pdfPath)) {
+                throw std::runtime_error("PDF file too large (>500MB)");
+            }
+
+            if (m_queryRunner->isProcessing()) {
+                updateStatus("Processing already in progress");
+                return;
+            }
+
+            // Use the existing PDF processing pipeline
+            setUIEnabled(false);
+            startSpinner();
+            updateStatus("Starting Zotero PDF analysis...");
+            m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
+
+            // Clear previous results
+            clearResults();
+
+            // Start processing with QueryRunner using the PDF path
+            m_queryRunner->processPDF(pdfPath);
+
+        } catch (const std::exception& e) {
+            QString errorMsg = QString("Zotero PDF analysis failed: %1").arg(e.what());
+            handleError(errorMsg);
+            setUIEnabled(true);
+            stopSpinner();
+        } catch (...) {
+            handleError("Zotero PDF analysis failed: Unknown error");
+            setUIEnabled(true);
+            stopSpinner();
+        }
+    }
+
     void openSettings() {
         SettingsDialog dialog(this);
         if (dialog.exec() == QDialog::Accepted) {
             // Reload settings into QueryRunner
             m_queryRunner->loadSettingsFromDatabase();
+
+            // Reload Zotero credentials
+            QSqlDatabase db = QSqlDatabase::database();
+            if (db.isOpen()) {
+                QSqlQuery query(db);
+                if (query.exec("SELECT zotero_user_id, zotero_api_key FROM settings LIMIT 1") && query.next()) {
+                    QString userId = query.value("zotero_user_id").toString();
+                    QString apiKey = query.value("zotero_api_key").toString();
+                    m_zoteroInputWidget->setCredentials(userId, apiKey);
+                    log("Zotero credentials reloaded");
+                }
+            }
+
             log("Settings updated and reloaded");
         }
     }

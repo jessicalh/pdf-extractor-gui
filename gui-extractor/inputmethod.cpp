@@ -1,4 +1,5 @@
 #include "inputmethod.h"
+#include "safepdfloader.h"
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -12,6 +13,8 @@
 #include <QPdfDocument>
 #include <QNetworkAccessManager>
 #include <QRegularExpression>
+#include <QDebug>
+#include <memory>
 
 // Base class helper method
 QString InputMethod::stripCopyright(const QString& text) {
@@ -113,31 +116,51 @@ QString PdfFileInputMethod::extractText() {
     // Clean up any previous document
     cleanup();
 
-    m_pdfDocument = new QPdfDocument(this);
+    try {
+        // Use SafePdfLoader for validation and loading
+        QString loadError;
+        auto pdfDoc = std::make_unique<QPdfDocument>();
 
-    if (m_pdfDocument->load(m_currentFilePath) != QPdfDocument::Error::None) {
-        cleanup();
+        if (!SafePdfLoader::loadPdf(pdfDoc.get(), m_currentFilePath, loadError, 30000)) {
+            emit statusUpdate("Error: " + loadError);
+            qDebug() << "PDF load failed:" << loadError;
+            return QString();
+        }
+
+        // Extract text safely
+        QString extractError;
+        QString allText = SafePdfLoader::extractTextSafely(pdfDoc.get(), extractError);
+
+        if (allText.isEmpty()) {
+            emit statusUpdate("Error: " + extractError);
+            qDebug() << "Text extraction failed:" << extractError;
+            return QString();
+        }
+
+        QString processedText = stripCopyright(allText);
+        emit statusUpdate("Text extraction completed successfully");
+        return processedText;
+
+    } catch (const std::exception& e) {
+        QString errorMsg = QString("Exception during PDF extraction: %1").arg(e.what());
+        emit statusUpdate(errorMsg);
+        qDebug() << errorMsg;
+        return QString();
+    } catch (...) {
+        emit statusUpdate("Unknown exception during PDF extraction");
+        qDebug() << "Unknown exception in PdfFileInputMethod::extractText";
         return QString();
     }
-
-    QString allText;
-    int pageCount = m_pdfDocument->pageCount();
-
-    for (int i = 0; i < pageCount; ++i) {
-        QString pageText = m_pdfDocument->getAllText(i).text();
-        allText += pageText + "\n";
-        emit statusUpdate(QString("Extracting page %1 of %2...").arg(i + 1).arg(pageCount));
-    }
-
-    QString processedText = stripCopyright(allText);
-
-    cleanup();
-    return processedText;
 }
 
 void PdfFileInputMethod::cleanup() {
-    if (m_pdfDocument) {
-        delete m_pdfDocument;
+    try {
+        if (m_pdfDocument) {
+            delete m_pdfDocument;
+            m_pdfDocument = nullptr;
+        }
+    } catch (...) {
+        qDebug() << "Exception during PDF document cleanup";
         m_pdfDocument = nullptr;
     }
 }
@@ -329,16 +352,32 @@ void ZoteroInputMethod::downloadPdf(const QString& itemId) {
 }
 
 QString ZoteroInputMethod::extractFromPdf(const QString& pdfPath) {
-    // Use QPdfDocument to extract text
-    QPdfDocument doc;
-    if (doc.load(pdfPath) != QPdfDocument::Error::None) {
+    try {
+        // Use SafePdfLoader for safe PDF loading and extraction
+        QString loadError;
+        auto pdfDoc = std::make_unique<QPdfDocument>();
+
+        if (!SafePdfLoader::loadPdf(pdfDoc.get(), pdfPath, loadError, 30000)) {
+            qDebug() << "Zotero PDF load failed:" << loadError;
+            return QString();
+        }
+
+        // Extract text safely
+        QString extractError;
+        QString allText = SafePdfLoader::extractTextSafely(pdfDoc.get(), extractError);
+
+        if (allText.isEmpty()) {
+            qDebug() << "Zotero text extraction failed:" << extractError;
+            return QString();
+        }
+
+        return stripCopyright(allText);
+
+    } catch (const std::exception& e) {
+        qDebug() << "Exception in ZoteroInputMethod::extractFromPdf:" << e.what();
+        return QString();
+    } catch (...) {
+        qDebug() << "Unknown exception in ZoteroInputMethod::extractFromPdf";
         return QString();
     }
-
-    QString allText;
-    for (int i = 0; i < doc.pageCount(); ++i) {
-        allText += doc.getAllText(i).text() + "\n";
-    }
-
-    return stripCopyright(allText);
 }

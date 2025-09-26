@@ -1,4 +1,5 @@
 #include "queryrunner.h"
+#include "safepdfloader.h"
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QRegularExpression>
@@ -8,6 +9,8 @@
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QDir>
+#include <memory>
+#include <exception>
 
 QueryRunner::QueryRunner(QObject *parent)
     : QObject(parent)
@@ -182,35 +185,51 @@ void QueryRunner::processText(const QString& text) {
 }
 
 QString QueryRunner::extractTextFromPDF(const QString& filePath) {
-    // Close any previously open document first
-    m_pdfDocument->close();
+    try {
+        // Close any previously open document first
+        try {
+            m_pdfDocument->close();
+        } catch (...) {
+            // Ignore cleanup exceptions
+        }
 
-    QPdfDocument::Error error = m_pdfDocument->load(filePath);
+        // Use SafePdfLoader for safe loading and extraction
+        QString loadError;
+        auto tempDoc = std::make_unique<QPdfDocument>();
 
-    if (error != QPdfDocument::Error::None) {
-        emit errorOccurred("Failed to load PDF: " + QString::number(static_cast<int>(error)));
-        // No need to close here as load() failed
+        emit progressMessage("Loading PDF file...");
+
+        if (!SafePdfLoader::loadPdf(tempDoc.get(), filePath, loadError, 60000)) { // 60 second timeout
+            emit errorOccurred("Failed to load PDF: " + loadError);
+            return QString();
+        }
+
+        emit progressMessage("Extracting text from PDF...");
+
+        // Extract text safely
+        QString extractError;
+        QString extractedText = SafePdfLoader::extractTextSafely(tempDoc.get(), extractError);
+
+        if (extractedText.isEmpty()) {
+            emit errorOccurred("Failed to extract text: " + extractError);
+            return QString();
+        }
+
+        // Document is automatically cleaned up when tempDoc goes out of scope
+        emit progressMessage("PDF extraction completed successfully");
+
+        return extractedText;
+
+    } catch (const std::exception& e) {
+        QString errorMsg = QString("Exception during PDF extraction: %1").arg(e.what());
+        emit errorOccurred(errorMsg);
+        qDebug() << errorMsg;
+        return QString();
+    } catch (...) {
+        emit errorOccurred("Unknown exception during PDF extraction");
+        qDebug() << "Unknown exception in QueryRunner::extractTextFromPDF";
         return QString();
     }
-
-    QString extractedText;
-    int pageCount = m_pdfDocument->pageCount();
-
-    for (int i = 0; i < pageCount; ++i) {
-        QString pageText = m_pdfDocument->getAllText(i).text();
-        extractedText += pageText + "\n";
-
-        // Update progress
-        int progress = ((i + 1) * 100) / pageCount;
-        emit progressMessage(QString("Extracting page %1 of %2 (%3%)...")
-                           .arg(i + 1).arg(pageCount).arg(progress));
-    }
-
-    // Close the document immediately after extraction is complete
-    m_pdfDocument->close();
-    emit progressMessage("PDF file closed");
-
-    return extractedText;
 }
 
 QString QueryRunner::cleanupText(const QString& text, InputType type) {

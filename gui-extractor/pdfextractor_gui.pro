@@ -14,12 +14,16 @@ SOURCES += main.cpp \
     promptquery.cpp \
     queryrunner.cpp \
     modellistfetcher.cpp \
-    inputmethod.cpp
+    inputmethod.cpp \
+    zoteroinput.cpp \
+    safepdfloader.cpp
 
 HEADERS += promptquery.h \
     queryrunner.h \
     modellistfetcher.h \
-    inputmethod.h
+    inputmethod.h \
+    zoteroinput.h \
+    safepdfloader.h
 
 # Windows specific settings
 win32 {
