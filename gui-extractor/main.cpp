@@ -1347,14 +1347,18 @@ private:
 
     void connectSignals() {
         connect(m_browseButton, &QPushButton::clicked, this, &PDFExtractorGUI::browseForPDF);
-        connect(m_pdfAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzePDF);
+        connect(m_pdfAnalyzeButton, &QPushButton::clicked, [this]() {
+            qDebug() << "PDF Analyze button clicked";
+            qDebug() << "Current file path in edit:" << m_filePathEdit->text();
+            analyzePDF();
+        });
         connect(m_textAnalyzeButton, &QPushButton::clicked, this, &PDFExtractorGUI::analyzeText);
 
-        // Connect Zotero widget signals
+        // Connect Zotero widget signals - use the SAME analyzePDF path
         connect(m_zoteroInputWidget, &ZoteroInputWidget::analyzeRequested, [this]() {
             QString pdfPath = m_zoteroInputWidget->getPdfPath();
             if (!pdfPath.isEmpty()) {
-                analyzeZoteroPdf(pdfPath);
+                analyzePDF(pdfPath);  // Use the single unified path
             }
         });
 
@@ -1584,9 +1588,24 @@ private slots:
         }
     }
 
-    void analyzePDF() {
-        QString pdfPath = m_filePathEdit->text();
-        if (pdfPath.isEmpty()) {
+    void analyzePDF(const QString& pdfPath = QString()) {
+        // Use the provided path or get it from the file input
+        QString pathToUse = pdfPath.isEmpty() ? m_filePathEdit->text() : pdfPath;
+
+        // Debug logging
+        qDebug() << "analyzePDF called";
+        qDebug() << "  pdfPath parameter:" << pdfPath;
+        qDebug() << "  pdfPath.isEmpty():" << pdfPath.isEmpty();
+        qDebug() << "  m_filePathEdit:" << m_filePathEdit;
+        qDebug() << "  m_filePathEdit->text():" << m_filePathEdit->text();
+        qDebug() << "  pathToUse:" << pathToUse;
+
+        // Extra check
+        if (pathToUse != pdfPath && !pdfPath.isEmpty()) {
+            qDebug() << "WARNING: pathToUse differs from pdfPath!";
+        }
+
+        if (pathToUse.isEmpty()) {
             updateStatus("Please select a PDF file first");
             return;
         }
@@ -1604,8 +1623,8 @@ private slots:
         // Clear previous results
         clearResults();
 
-        // Start processing with QueryRunner
-        m_queryRunner->processPDF(pdfPath);
+        // Start processing with QueryRunner - ALL safety checks are now in processPDF
+        m_queryRunner->processPDF(pathToUse);
     }
 
     void analyzeText() {
@@ -1632,54 +1651,7 @@ private slots:
         m_queryRunner->processText(text);
     }
 
-    void analyzeZoteroPdf(const QString& pdfPath) {
-        try {
-            if (pdfPath.isEmpty()) {
-                throw std::invalid_argument("Empty PDF path");
-            }
-
-            // Validate file exists and is readable
-            QFileInfo fileInfo(pdfPath);
-            if (!fileInfo.exists()) {
-                throw std::runtime_error("PDF file does not exist");
-            }
-            if (!fileInfo.isReadable()) {
-                throw std::runtime_error("PDF file is not readable");
-            }
-
-            // Check file size
-            if (!SafePdfLoader::checkFileSize(pdfPath)) {
-                throw std::runtime_error("PDF file too large (>500MB)");
-            }
-
-            if (m_queryRunner->isProcessing()) {
-                updateStatus("Processing already in progress");
-                return;
-            }
-
-            // Use the existing PDF processing pipeline
-            setUIEnabled(false);
-            startSpinner();
-            updateStatus("Starting Zotero PDF analysis...");
-            m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
-
-            // Clear previous results
-            clearResults();
-
-            // Start processing with QueryRunner using the PDF path
-            m_queryRunner->processPDF(pdfPath);
-
-        } catch (const std::exception& e) {
-            QString errorMsg = QString("Zotero PDF analysis failed: %1").arg(e.what());
-            handleError(errorMsg);
-            setUIEnabled(true);
-            stopSpinner();
-        } catch (...) {
-            handleError("Zotero PDF analysis failed: Unknown error");
-            setUIEnabled(true);
-            stopSpinner();
-        }
-    }
+    // REMOVED analyzeZoteroPdf - now using unified analyzePDF() for all PDFs
 
     void openSettings() {
         SettingsDialog dialog(this);

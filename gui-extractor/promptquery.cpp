@@ -113,6 +113,11 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
     QJsonDocument doc(requestBody);
     QByteArray requestData = doc.toJson();
 
+    // DEBUG: Dump full JSON to see what's being sent
+    qDebug() << "=== FULL JSON REQUEST BEING SENT ===";
+    qDebug() << QString::fromUtf8(requestData);
+    qDebug() << "=== END JSON REQUEST ===";
+
     QNetworkRequest request;
     request.setUrl(QUrl(m_url));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");

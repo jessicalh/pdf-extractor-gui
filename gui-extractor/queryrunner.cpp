@@ -5,6 +5,7 @@
 #include <QRegularExpression>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QDateTime>
 #include <QCoreApplication>
@@ -73,6 +74,21 @@ QueryRunner::~QueryRunner() {
 void QueryRunner::reset() {
     m_currentStage = Idle;
     emit stageChanged(m_currentStage);
+
+    // Clear ALL persistent state from previous runs
+    m_extractedText.clear();
+    m_cleanedText.clear();
+    m_summary.clear();
+    m_originalKeywords.clear();
+    m_suggestedPrompt.clear();
+    m_refinedKeywords.clear();
+
+    // CRITICAL: Also clear state in the reused query objects!
+    m_keywordsQuery->setSummaryResult("");  // Clear old summary from keywords query
+    m_refineQuery->setOriginalKeywords("");  // Clear old keywords from refine query
+    m_refineQuery->setOriginalPrompt("");    // Clear old prompt from refine query
+    m_refinedKeywordsQuery->setSummaryResult("");  // Clear old summary from refined keywords query
+
     emit progressMessage("Ready for new analysis");
 }
 
@@ -135,6 +151,46 @@ void QueryRunner::processKeywordsOnly() {
 }
 
 void QueryRunner::processPDF(const QString& filePath) {
+    // SAFETY CHECKS FIRST - Apply to ALL PDFs, not just Zotero
+    try {
+        if (filePath.isEmpty()) {
+            emit errorOccurred("Empty PDF path provided");
+            return;
+        }
+
+        // Validate file exists and is readable
+        QFileInfo fileInfo(filePath);
+        if (!fileInfo.exists()) {
+            emit errorOccurred("PDF file does not exist: " + filePath);
+            return;
+        }
+        if (!fileInfo.isReadable()) {
+            emit errorOccurred("PDF file is not readable: " + filePath);
+            return;
+        }
+
+        // Check file size using SafePdfLoader
+        if (!SafePdfLoader::checkFileSize(filePath)) {
+            emit errorOccurred("PDF file too large (>500MB): " + filePath);
+            return;
+        }
+
+        // Validate it's actually a PDF
+        QString validateError;
+        if (!SafePdfLoader::validatePdfFile(filePath, validateError)) {
+            emit errorOccurred("Invalid PDF file: " + validateError);
+            return;
+        }
+
+    } catch (const std::exception& e) {
+        emit errorOccurred(QString("PDF validation failed: %1").arg(e.what()));
+        return;
+    } catch (...) {
+        emit errorOccurred("PDF validation failed: Unknown error");
+        return;
+    }
+
+    // Now proceed with normal processing
     if (m_currentStage != Idle) {
         emit progressMessage("Note: Resetting from previous incomplete operation");
         reset();
@@ -146,6 +202,8 @@ void QueryRunner::processPDF(const QString& filePath) {
     emit progressMessage("Opening PDF file...");
 
     QString extractedText = extractTextFromPDF(filePath);
+
+    qDebug() << "PDF extraction result length:" << extractedText.length();
 
     if (extractedText.isEmpty()) {
         // Ensure PDF is closed on error (though extractTextFromPDF should have already closed it)
@@ -159,6 +217,7 @@ void QueryRunner::processPDF(const QString& filePath) {
     m_extractedText = extractedText;
     emit textExtracted(m_extractedText);
 
+    qDebug() << "Starting pipeline with" << extractedText.length() << "characters";
     startPipeline(extractedText, PDFFile);
 }
 
@@ -235,8 +294,20 @@ QString QueryRunner::extractTextFromPDF(const QString& filePath) {
 QString QueryRunner::cleanupText(const QString& text, InputType type) {
     QString cleaned = text;
 
+    // Normalize line endings FIRST (Windows \r\n to Unix \n)
+    cleaned.replace("\r\n", "\n");
+    cleaned.replace("\r", "\n");
+
     // Always remove copyright notices for LLM processing
     cleaned = removeCopyrightNotices(cleaned);
+
+    // Remove problematic Unicode characters that confuse LLMs
+    // Remove soft hyphens and other invisible formatting characters
+    cleaned.remove(QChar(0x00AD)); // Soft hyphen
+    cleaned.remove(QChar(0xFFFD)); // Replacement character
+    cleaned.remove(QChar(0xFFF9)); // Interlinear annotation anchor
+    cleaned.remove(QChar(0xFFFA)); // Interlinear annotation separator
+    cleaned.remove(QChar(0xFFFB)); // Interlinear annotation terminator
 
     // Remove excessive whitespace
     cleaned.replace(QRegularExpression("\\n{3,}"), "\n\n");
@@ -312,7 +383,15 @@ void QueryRunner::startPipeline(const QString& text, InputType type) {
     }
 
     // Clean up the text
+    qDebug() << "Text before cleanup:" << text.length() << "characters";
+    qDebug() << "First 200 chars before cleanup:" << text.left(200);
     m_cleanedText = cleanupText(text, type);
+    qDebug() << "Text after cleanup:" << m_cleanedText.length() << "characters";
+    qDebug() << "First 200 chars after cleanup:" << m_cleanedText.left(200);
+
+    if (m_cleanedText.length() < text.length() / 2) {
+        qDebug() << "WARNING: Cleanup removed more than half the text!";
+    }
 
     if (m_cleanedText.isEmpty()) {
         // Ensure PDF is closed if we're processing a PDF

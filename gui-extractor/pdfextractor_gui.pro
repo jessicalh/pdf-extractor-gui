@@ -14,16 +14,16 @@ SOURCES += main.cpp \
     promptquery.cpp \
     queryrunner.cpp \
     modellistfetcher.cpp \
-    inputmethod.cpp \
     zoteroinput.cpp \
     safepdfloader.cpp
+#    inputmethod.cpp  # REMOVED: Unused - all PDF processing unified in QueryRunner::processPDF
 
 HEADERS += promptquery.h \
     queryrunner.h \
     modellistfetcher.h \
-    inputmethod.h \
     zoteroinput.h \
     safepdfloader.h
+#    inputmethod.h  # REMOVED: Unused - all PDF processing unified in QueryRunner::processPDF
 
 # Windows specific settings
 win32 {
