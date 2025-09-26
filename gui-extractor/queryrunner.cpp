@@ -150,6 +150,41 @@ void QueryRunner::processKeywordsOnly() {
     runKeywordExtraction();
 }
 
+void QueryRunner::processKeywordsOnly(const QString& extractedText, const QString& summaryText) {
+    // Reset state but preserve the provided text
+    if (m_currentStage != Idle) {
+        emit progressMessage("Note: Resetting from previous operation");
+        reset();
+    }
+
+    // Set the text from UI (source of truth)
+    m_cleanedText = extractedText;
+    m_extractedText = extractedText;
+    m_summary = summaryText;
+
+    // Check prerequisites after setting text
+    if (m_cleanedText.isEmpty()) {
+        emit errorOccurred("No text available for keyword extraction. Please provide extracted text.");
+        return;
+    }
+
+    // ALWAYS reload settings from database to get user's manual edits
+    loadSettingsFromDatabase();
+
+    emit progressMessage("=== RE-RUNNING KEYWORD EXTRACTION ===");
+    emit progressMessage("Using text from UI display");
+    emit progressMessage(QString("Text length: %1 characters").arg(m_cleanedText.length()));
+    if (!m_summary.isEmpty()) {
+        emit progressMessage(QString("Summary available: %1 characters").arg(m_summary.length()));
+    }
+
+    // Set single-step mode flag
+    m_singleStepMode = true;
+
+    // Run keyword extraction with fresh database settings and UI text
+    runKeywordExtraction();
+}
+
 void QueryRunner::processPDF(const QString& filePath) {
     // SAFETY CHECKS FIRST - Apply to ALL PDFs, not just Zotero
     try {

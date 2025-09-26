@@ -46,6 +46,7 @@ public:
     void reset();    // Resets to Idle state for error recovery
     void abort();    // User-initiated graceful cancellation
     void processKeywordsOnly();  // Run just keyword extraction with current settings
+    void processKeywordsOnly(const QString& extractedText, const QString& summaryText);  // Run keywords with UI text
 
     // Results access
     QString getExtractedText() const { return m_extractedText; }

@@ -1499,8 +1499,12 @@ private:
             startSpinner();
             updateStatus("Re-extracting keywords...");
 
-            // Run keyword extraction only
-            m_queryRunner->processKeywordsOnly();
+            // Get text from UI (source of truth since user may have edited it)
+            QString uiExtractedText = m_extractedTextEdit->toPlainText();
+            QString uiSummaryText = m_summaryTextEdit->toPlainText();
+
+            // Run keyword extraction only with UI text
+            m_queryRunner->processKeywordsOnly(uiExtractedText, uiSummaryText);
         });
 
         connect(m_copyKeywordsButton, &QPushButton::clicked, [this]() {

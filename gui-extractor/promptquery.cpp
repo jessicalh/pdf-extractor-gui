@@ -1,5 +1,6 @@
 #include "promptquery.h"
 #include <QNetworkRequest>
+#include <QNetworkCookieJar>
 #include <QUrl>
 #include <QDebug>
 #include <QFile>
@@ -15,7 +16,7 @@ PromptQuery::PromptQuery(QObject *parent)
     , m_temperature(0.8)
     , m_contextLength(8000)
     , m_timeout(120000)
-    , m_networkManager(new QNetworkAccessManager(this))
+    , m_networkManager(nullptr)  // Don't create here - we'll create fresh one for each request
     , m_currentReply(nullptr)
     , m_timeoutTimer(new QTimer(this))
 {
@@ -24,9 +25,19 @@ PromptQuery::PromptQuery(QObject *parent)
 }
 
 PromptQuery::~PromptQuery() {
+    // Clean up any pending network reply
     if (m_currentReply) {
         m_currentReply->abort();
         m_currentReply->deleteLater();
+        m_currentReply = nullptr;
+    }
+
+    // Explicitly delete the network manager
+    // (even though it's parented to this, be explicit for safety)
+    if (m_networkManager) {
+        m_networkManager->disconnect();
+        delete m_networkManager;
+        m_networkManager = nullptr;
     }
 }
 
@@ -88,6 +99,58 @@ void PromptQuery::abort() {
 }
 
 void PromptQuery::sendRequest(const QString& fullPrompt) {
+    // AGGRESSIVE CLEANUP: Create fresh QNetworkAccessManager for each request
+    // This nuclear option ensures NO state persists between operations
+    //
+    // RESOURCE MANAGEMENT GUARANTEE:
+    // 1. m_networkManager: Always deleted before creating new one
+    // 2. newManager: Deleted on any exception before assignment to m_networkManager
+    // 3. freshCookieJar: Parented to newManager, auto-deleted with manager
+    // 4. m_currentReply: Cleaned up via cleanupNetworkReply() and deleteLater()
+    // 5. On destruction: Destructor explicitly cleans up all resources
+
+    // First, clean up any existing manager
+    if (m_networkManager) {
+        m_networkManager->disconnect();
+        delete m_networkManager;
+        m_networkManager = nullptr;
+    }
+
+    // Create new manager with proper error handling
+    QNetworkAccessManager* newManager = nullptr;
+    try {
+        newManager = new QNetworkAccessManager(this);
+        if (!newManager) {
+            emit errorOccurred("Failed to create network manager");
+            return;
+        }
+
+        // AGGRESSIVE CLEANUP: Set a fresh cookie jar to ensure no cookie persistence
+        // Cookie jar is parented to newManager, so it will be auto-deleted
+        QNetworkCookieJar* freshCookieJar = new QNetworkCookieJar(newManager);
+        newManager->setCookieJar(freshCookieJar);
+
+        // Only assign to member after successful setup
+        m_networkManager = newManager;
+        newManager = nullptr; // Clear local pointer since ownership transferred
+        qDebug() << "Created fresh QNetworkAccessManager with clean cookie jar";
+
+    } catch (const std::exception& e) {
+        // Clean up the partially created manager
+        if (newManager) {
+            delete newManager;
+        }
+        emit errorOccurred(QString("Network manager creation failed: %1").arg(e.what()));
+        return;
+    } catch (...) {
+        // Clean up the partially created manager
+        if (newManager) {
+            delete newManager;
+        }
+        emit errorOccurred("Network manager creation failed: Unknown error");
+        return;
+    }
+
     QJsonArray messages;
 
     // If we have a preprompt, send it as a system message
@@ -113,6 +176,20 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
     QJsonDocument doc(requestBody);
     QByteArray requestData = doc.toJson();
 
+    // DIAGNOSTIC: Check for UTF-8 BOM contamination
+    if (requestData.startsWith("\xEF\xBB\xBF")) {
+        qDebug() << "WARNING: BOM detected in JSON data! This will corrupt the request.";
+        emit progressUpdate("WARNING: BOM contamination detected in JSON");
+        // Remove the BOM
+        requestData = requestData.mid(3);
+    }
+
+    // Additional check for other non-printable characters at the start
+    if (!requestData.isEmpty() && requestData[0] < 0x20 && requestData[0] != '\n' && requestData[0] != '\r' && requestData[0] != '\t') {
+        qDebug() << "WARNING: Non-printable character detected at start of JSON:" << QString("0x%1").arg(static_cast<unsigned char>(requestData[0]), 0, 16);
+        emit progressUpdate(QString("WARNING: Non-printable character (0x%1) detected").arg(static_cast<unsigned char>(requestData[0]), 0, 16));
+    }
+
     // DEBUG: Dump full JSON to see what's being sent
     qDebug() << "=== FULL JSON REQUEST BEING SENT ===";
     qDebug() << QString::fromUtf8(requestData);
@@ -122,6 +199,11 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
     request.setUrl(QUrl(m_url));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("User-Agent", "PDFExtractor/1.0");
+
+    // AGGRESSIVE CLEANUP: Prevent Qt from buffering the upload data
+    request.setAttribute(QNetworkRequest::DoNotBufferUploadDataAttribute, true);
+    // Set explicit Content-Length to avoid buffering issues
+    request.setRawHeader("Content-Length", QByteArray::number(requestData.size()));
 
     // Log the request summary (not full prompt to UI)
     emit progressUpdate(QString("=== %1 REQUEST SENT ===").arg(getQueryType().toUpper()));
@@ -188,7 +270,19 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
         emit progressUpdate("✗ Final prompt does NOT contain 'Summary:' keyword");
     }
 
+    // AGGRESSIVE CLEANUP: Clear any global Qt network state before posting
+    // Note: QNetworkAccessManager doesn't have a static clearConnectionCache,
+    // but we can ensure our instance is clean
+    if (m_networkManager) {
+        m_networkManager->clearConnectionCache();
+        m_networkManager->clearAccessCache();
+    }
+
     m_currentReply = m_networkManager->post(request, requestData);
+    if (!m_currentReply) {
+        emit errorOccurred("Failed to create network request");
+        return;
+    }
 
     connect(m_currentReply, &QNetworkReply::finished,
             this, &PromptQuery::handleNetworkReply);

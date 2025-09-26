@@ -538,12 +538,38 @@ void ZoteroInputWidget::handlePdfDownloadReply() {
         if (redirectUrl.isValid()) {
             logToFile(QString("Following redirect to: %1").arg(redirectUrl.toString()));
 
-            // Follow the redirect without Zotero headers
-            QNetworkRequest redirectRequest{redirectUrl};
-            // Don't add Zotero headers for S3
-            m_currentReply = m_networkManager->get(redirectRequest);
-            connect(m_currentReply, &QNetworkReply::finished, this, &ZoteroInputWidget::handlePdfDownloadReply);
-            return;
+            // AGGRESSIVE CLEANUP: Ensure old reply is fully cleaned before redirect
+            // The qScopeGuard will still clean up 'reply', but we need to ensure
+            // no contamination occurs when creating the new request
+            try {
+                // Clear any network caches before redirect
+                if (m_networkManager) {
+                    m_networkManager->clearConnectionCache();
+                    m_networkManager->clearAccessCache();
+                    logToFile("Cleared network caches before redirect");
+                }
+
+                // Follow the redirect without Zotero headers
+                QNetworkRequest redirectRequest{redirectUrl};
+                // Don't add Zotero headers for S3
+                redirectRequest.setAttribute(QNetworkRequest::DoNotBufferUploadDataAttribute, true);
+
+                m_currentReply = m_networkManager->get(redirectRequest);
+                if (!m_currentReply) {
+                    throw std::runtime_error("Failed to create redirect request");
+                }
+
+                connect(m_currentReply, &QNetworkReply::finished, this, &ZoteroInputWidget::handlePdfDownloadReply);
+                return;
+            } catch (const std::exception& e) {
+                logError(QString("Redirect failed: %1").arg(e.what()));
+                showError(QString("Failed to follow redirect: %1").arg(e.what()));
+                m_downloadedPdfPath.clear();
+                setUIEnabled(true);
+                m_isLoading = false;
+                setState(PaperSelected);
+                return;
+            }
         }
     }
 
