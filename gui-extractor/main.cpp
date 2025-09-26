@@ -225,6 +225,10 @@ public:
         auto *refinementTab = createRefinementTab();
         tabWidget->addTab(refinementTab, "✨ Prompt Refinement");
 
+        // === ZOTERO TAB ===
+        auto *zoteroTab = createZoteroTab();
+        tabWidget->addTab(zoteroTab, "📚 Zotero");
+
         layout->addWidget(tabWidget);
 
         // Dialog buttons with proper alignment
@@ -409,6 +413,39 @@ private:
         return widget;
     }
 
+    QWidget* createZoteroTab() {
+        auto *widget = new QWidget();
+        auto *layout = new QVBoxLayout(widget);
+
+        auto *formLayout = new QFormLayout();
+        formLayout->setSpacing(15);
+
+        auto *headerLabel = new QLabel("<h3>Zotero API Configuration</h3>");
+        formLayout->addRow(headerLabel);
+
+        m_zoteroUserIdEdit = new QLineEdit();
+        m_zoteroUserIdEdit->setPlaceholderText("Enter your Zotero User ID");
+        formLayout->addRow("User ID:", m_zoteroUserIdEdit);
+
+        m_zoteroApiKeyEdit = new QLineEdit();
+        m_zoteroApiKeyEdit->setPlaceholderText("Enter your Zotero API Key");
+        m_zoteroApiKeyEdit->setEchoMode(QLineEdit::Password);
+        formLayout->addRow("API Key:", m_zoteroApiKeyEdit);
+
+        auto *helpLabel = new QLabel("<i>To obtain your Zotero credentials:<br>"
+                                    "1. Log in to zotero.org<br>"
+                                    "2. Go to Settings → Feeds/API<br>"
+                                    "3. Create a new API key with library access<br>"
+                                    "4. Your User ID is shown on the same page</i>");
+        helpLabel->setWordWrap(true);
+        formLayout->addRow("", helpLabel);
+
+        layout->addLayout(formLayout);
+        layout->addStretch();
+
+        return widget;
+    }
+
     QWidget* createRefinementTab() {
         auto *widget = new QWidget();
         auto *layout = new QVBoxLayout(widget);
@@ -506,6 +543,10 @@ public:
             m_skipRefinementCheckBox->setChecked(skipRefinement == "true");
             m_keywordRefinementPrepromptEdit->setPlainText(query.value("keyword_refinement_preprompt").toString());
             m_prepromptRefinementPromptEdit->setPlainText(query.value("preprompt_refinement_prompt").toString());
+
+            // Zotero settings
+            m_zoteroUserIdEdit->setText(query.value("zotero_user_id").toString());
+            m_zoteroApiKeyEdit->setText(query.value("zotero_api_key").toString());
         }
     }
 
@@ -532,7 +573,9 @@ public:
                      "refinement_timeout = :refinement_timeout, "
                      "skip_refinement = :skip_refinement, "
                      "keyword_refinement_preprompt = :keyword_refinement_preprompt, "
-                     "preprompt_refinement_prompt = :preprompt_refinement_prompt");
+                     "preprompt_refinement_prompt = :preprompt_refinement_prompt, "
+                     "zotero_user_id = :zotero_user_id, "
+                     "zotero_api_key = :zotero_api_key");
 
         // Connection settings
         query.bindValue(":url", m_urlEdit->text());
@@ -560,6 +603,10 @@ public:
         query.bindValue(":skip_refinement", m_skipRefinementCheckBox->isChecked() ? "true" : "false");
         query.bindValue(":keyword_refinement_preprompt", m_keywordRefinementPrepromptEdit->toPlainText());
         query.bindValue(":preprompt_refinement_prompt", m_prepromptRefinementPromptEdit->toPlainText());
+
+        // Zotero settings
+        query.bindValue(":zotero_user_id", m_zoteroUserIdEdit->text());
+        query.bindValue(":zotero_api_key", m_zoteroApiKeyEdit->text());
 
         if (!query.exec()) {
             QMessageBox::critical(this, "Error", "Failed to save settings: " + query.lastError().text());
@@ -653,6 +700,10 @@ public:
         m_skipRefinementCheckBox->setChecked(false);  // Default to not skipping
         m_keywordRefinementPrepromptEdit->setPlainText(DefaultSettings::getKeywordRefinementPreprompt());
         m_prepromptRefinementPromptEdit->setPlainText(DefaultSettings::getPrepromptRefinementPrompt());
+
+        // Zotero defaults (empty by default as these are user-specific)
+        m_zoteroUserIdEdit->clear();
+        m_zoteroApiKeyEdit->clear();
     }
 
 private:
@@ -684,6 +735,10 @@ private:
     QCheckBox *m_skipRefinementCheckBox;
     QTextEdit *m_keywordRefinementPrepromptEdit;
     QTextEdit *m_prepromptRefinementPromptEdit;
+
+    // Zotero tab widgets
+    QLineEdit *m_zoteroUserIdEdit;
+    QLineEdit *m_zoteroApiKeyEdit;
 };
 
 // Main PDF Extractor GUI Window
@@ -846,7 +901,10 @@ private:
                 refinement_timeout TEXT,
                 skip_refinement TEXT,
                 keyword_refinement_preprompt TEXT,
-                preprompt_refinement_prompt TEXT
+                preprompt_refinement_prompt TEXT,
+
+                zotero_user_id TEXT,
+                zotero_api_key TEXT
             )
         )";
 
@@ -855,6 +913,12 @@ private:
                                 "Failed to create table: " + query.lastError().text());
             return;
         }
+
+        // Add Zotero columns to existing databases
+        QSqlQuery alterQuery(db);
+        alterQuery.exec("ALTER TABLE settings ADD COLUMN zotero_user_id TEXT");
+        alterQuery.exec("ALTER TABLE settings ADD COLUMN zotero_api_key TEXT");
+        // Ignore errors as columns may already exist
 
         // Check if skip_refinement column exists (for migration from older versions)
         if (query.exec("PRAGMA table_info(settings)")) {
@@ -891,7 +955,8 @@ private:
                     keyword_temperature, keyword_context_length, keyword_timeout,
                     keyword_preprompt, keyword_prompt,
                     refinement_temperature, refinement_context_length, refinement_timeout, skip_refinement,
-                    keyword_refinement_preprompt, preprompt_refinement_prompt
+                    keyword_refinement_preprompt, preprompt_refinement_prompt,
+                    zotero_user_id, zotero_api_key
                 ) VALUES (
                     :url, :model_name, :overall_timeout, :text_truncation_limit,
                     :summary_temperature, :summary_context_length, :summary_timeout,
@@ -899,7 +964,8 @@ private:
                     :keyword_temperature, :keyword_context_length, :keyword_timeout,
                     :keyword_preprompt, :keyword_prompt,
                     :refinement_temperature, :refinement_context_length, :refinement_timeout, :skip_refinement,
-                    :keyword_refinement_preprompt, :preprompt_refinement_prompt
+                    :keyword_refinement_preprompt, :preprompt_refinement_prompt,
+                    :zotero_user_id, :zotero_api_key
                 )
             )";
 
@@ -930,6 +996,10 @@ private:
             query.bindValue(":skip_refinement", "false");  // Default to not skipping
             query.bindValue(":keyword_refinement_preprompt", DefaultSettings::getKeywordRefinementPreprompt());
             query.bindValue(":preprompt_refinement_prompt", DefaultSettings::getPrepromptRefinementPrompt());
+
+            // Zotero settings (empty by default)
+            query.bindValue(":zotero_user_id", "");
+            query.bindValue(":zotero_api_key", "");
 
             if (!query.exec()) {
                 QMessageBox::warning(nullptr, "Database Warning",
