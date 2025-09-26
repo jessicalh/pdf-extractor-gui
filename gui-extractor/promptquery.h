@@ -16,7 +16,7 @@ class PromptQuery : public QObject {
 
 public:
     explicit PromptQuery(QObject *parent = nullptr);
-    virtual ~PromptQuery();
+    ~PromptQuery() override;
 
     // Configuration methods
     void setConnectionSettings(const QString& url, const QString& modelName);
@@ -55,9 +55,12 @@ protected:
     int m_contextLength;
     int m_timeout;
 
-    // Prompt components
+    // Prompt components (needed by derived classes)
     QString m_preprompt;
     QString m_prompt;
+
+private:
+    void cleanupNetworkReply(bool forceClose = false);
 
     // Network handling
     QNetworkAccessManager* m_networkManager;
@@ -71,6 +74,7 @@ class SummaryQuery : public PromptQuery {
 
 public:
     explicit SummaryQuery(QObject *parent = nullptr);
+    ~SummaryQuery() override = default;
 
     QString buildFullPrompt(const QString& text) override;
     void processResponse(const QString& response) override;
@@ -83,10 +87,16 @@ class KeywordsQuery : public PromptQuery {
 
 public:
     explicit KeywordsQuery(QObject *parent = nullptr);
+    ~KeywordsQuery() override = default;
+
+    void setSummaryResult(const QString& summary);
 
     QString buildFullPrompt(const QString& text) override;
     void processResponse(const QString& response) override;
     QString getQueryType() const override;
+
+protected:
+    QString m_summaryResult;
 };
 
 // Query for refining keywords and generating improved prompts
@@ -95,6 +105,7 @@ class RefineKeywordsQuery : public PromptQuery {
 
 public:
     explicit RefineKeywordsQuery(QObject *parent = nullptr);
+    ~RefineKeywordsQuery() override = default;
 
     void setOriginalKeywords(const QString& keywords);
     void setOriginalPrompt(const QString& prompt);
@@ -114,9 +125,11 @@ class KeywordsWithRefinementQuery : public KeywordsQuery {
 
 public:
     explicit KeywordsWithRefinementQuery(QObject *parent = nullptr);
+    ~KeywordsWithRefinementQuery() override = default;
 
     void setRefinedPrompt(const QString& refinedPrompt);
     QString getQueryType() const override;
+    // Inherits setSummaryResult from KeywordsQuery
 };
 
 #endif // PROMPTQUERY_H

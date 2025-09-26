@@ -395,7 +395,7 @@ private:
         auto *promptGroup = new QGroupBox("Prompt");
         auto *promptLayout = new QVBoxLayout(promptGroup);
         m_keywordPromptEdit = new QTextEdit();
-        m_keywordPromptEdit->setPlaceholderText("Main prompt template\nUse {text} as placeholder for the input text");
+        m_keywordPromptEdit->setPlaceholderText("Main prompt template\nUse {text} for input text, {summary_result} for summary");
         promptLayout->addWidget(m_keywordPromptEdit);
         promptSplitter->addWidget(promptGroup);
 
@@ -434,6 +434,13 @@ private:
         m_refinementTimeoutEdit->setSuffix(" ms");
         m_refinementTimeoutEdit->setValue(DefaultSettings::REFINEMENT_TIMEOUT);
         settingsLayout->addWidget(m_refinementTimeoutEdit);
+
+        // Skip refinement checkbox
+        settingsLayout->addWidget(new QLabel("Skip:"));
+        m_skipRefinementCheckBox = new QCheckBox();
+        m_skipRefinementCheckBox->setToolTip("Skip keyword refinement and refined keyword extraction stages");
+        settingsLayout->addWidget(m_skipRefinementCheckBox);
+
         settingsLayout->addStretch();
         layout->addLayout(settingsLayout);
 
@@ -490,6 +497,9 @@ public:
             m_refinementTempEdit->setValue(query.value("refinement_temperature").toString().toDouble());
             m_refinementContextEdit->setValue(query.value("refinement_context_length").toString().toInt());
             m_refinementTimeoutEdit->setValue(query.value("refinement_timeout").toString().toInt());
+            // Load skip_refinement setting, default to false if not present
+            QString skipRefinement = query.value("skip_refinement").toString();
+            m_skipRefinementCheckBox->setChecked(skipRefinement == "true");
             m_keywordRefinementPrepromptEdit->setPlainText(query.value("keyword_refinement_preprompt").toString());
             m_prepromptRefinementPromptEdit->setPlainText(query.value("preprompt_refinement_prompt").toString());
         }
@@ -516,6 +526,7 @@ public:
                      "refinement_temperature = :refinement_temperature, "
                      "refinement_context_length = :refinement_context_length, "
                      "refinement_timeout = :refinement_timeout, "
+                     "skip_refinement = :skip_refinement, "
                      "keyword_refinement_preprompt = :keyword_refinement_preprompt, "
                      "preprompt_refinement_prompt = :preprompt_refinement_prompt");
 
@@ -542,6 +553,7 @@ public:
         query.bindValue(":refinement_temperature", QString::number(m_refinementTempEdit->value()));
         query.bindValue(":refinement_context_length", QString::number(m_refinementContextEdit->value()));
         query.bindValue(":refinement_timeout", QString::number(m_refinementTimeoutEdit->value()));
+        query.bindValue(":skip_refinement", m_skipRefinementCheckBox->isChecked() ? "true" : "false");
         query.bindValue(":keyword_refinement_preprompt", m_keywordRefinementPrepromptEdit->toPlainText());
         query.bindValue(":preprompt_refinement_prompt", m_prepromptRefinementPromptEdit->toPlainText());
 
@@ -634,6 +646,7 @@ public:
         m_refinementTempEdit->setValue(DefaultSettings::REFINEMENT_TEMPERATURE);
         m_refinementContextEdit->setValue(DefaultSettings::REFINEMENT_CONTEXT_LENGTH);
         m_refinementTimeoutEdit->setValue(DefaultSettings::REFINEMENT_TIMEOUT);
+        m_skipRefinementCheckBox->setChecked(false);  // Default to not skipping
         m_keywordRefinementPrepromptEdit->setPlainText(DefaultSettings::getKeywordRefinementPreprompt());
         m_prepromptRefinementPromptEdit->setPlainText(DefaultSettings::getPrepromptRefinementPrompt());
     }
@@ -664,6 +677,7 @@ private:
     QDoubleSpinBox *m_refinementTempEdit;
     QSpinBox *m_refinementContextEdit;
     QSpinBox *m_refinementTimeoutEdit;
+    QCheckBox *m_skipRefinementCheckBox;
     QTextEdit *m_keywordRefinementPrepromptEdit;
     QTextEdit *m_prepromptRefinementPromptEdit;
 };
@@ -826,6 +840,7 @@ private:
                 refinement_temperature TEXT,
                 refinement_context_length TEXT,
                 refinement_timeout TEXT,
+                skip_refinement TEXT,
                 keyword_refinement_preprompt TEXT,
                 preprompt_refinement_prompt TEXT
             )
@@ -835,6 +850,24 @@ private:
             QMessageBox::critical(nullptr, "Database Error",
                                 "Failed to create table: " + query.lastError().text());
             return;
+        }
+
+        // Check if skip_refinement column exists (for migration from older versions)
+        if (query.exec("PRAGMA table_info(settings)")) {
+            bool hasSkipRefinement = false;
+            while (query.next()) {
+                if (query.value("name").toString() == "skip_refinement") {
+                    hasSkipRefinement = true;
+                    break;
+                }
+            }
+
+            // Add column if it doesn't exist
+            if (!hasSkipRefinement) {
+                if (!query.exec("ALTER TABLE settings ADD COLUMN skip_refinement TEXT DEFAULT 'false'")) {
+                    qDebug() << "Warning: Could not add skip_refinement column:" << query.lastError().text();
+                }
+            }
         }
 
         // Check if we have any records
@@ -853,7 +886,7 @@ private:
                     summary_preprompt, summary_prompt,
                     keyword_temperature, keyword_context_length, keyword_timeout,
                     keyword_preprompt, keyword_prompt,
-                    refinement_temperature, refinement_context_length, refinement_timeout,
+                    refinement_temperature, refinement_context_length, refinement_timeout, skip_refinement,
                     keyword_refinement_preprompt, preprompt_refinement_prompt
                 ) VALUES (
                     :url, :model_name, :overall_timeout, :text_truncation_limit,
@@ -861,7 +894,7 @@ private:
                     :summary_preprompt, :summary_prompt,
                     :keyword_temperature, :keyword_context_length, :keyword_timeout,
                     :keyword_preprompt, :keyword_prompt,
-                    :refinement_temperature, :refinement_context_length, :refinement_timeout,
+                    :refinement_temperature, :refinement_context_length, :refinement_timeout, :skip_refinement,
                     :keyword_refinement_preprompt, :preprompt_refinement_prompt
                 )
             )";
@@ -890,6 +923,7 @@ private:
             query.bindValue(":refinement_temperature", QString::number(DefaultSettings::REFINEMENT_TEMPERATURE));
             query.bindValue(":refinement_context_length", QString::number(DefaultSettings::REFINEMENT_CONTEXT_LENGTH));
             query.bindValue(":refinement_timeout", QString::number(DefaultSettings::REFINEMENT_TIMEOUT));
+            query.bindValue(":skip_refinement", "false");  // Default to not skipping
             query.bindValue(":keyword_refinement_preprompt", DefaultSettings::getKeywordRefinementPreprompt());
             query.bindValue(":preprompt_refinement_prompt", DefaultSettings::getPrepromptRefinementPrompt());
 
@@ -1360,6 +1394,11 @@ private:
             m_logTextEdit->appendPlainText("\n=== RE-RUNNING KEYWORD EXTRACTION ===");
             m_logTextEdit->appendPlainText("Using current keyword prompt from Settings");
 
+            // Disable UI and start spinner (will be re-enabled by existing signal handlers)
+            setUIEnabled(false);
+            startSpinner();
+            updateStatus("Re-extracting keywords...");
+
             // Run keyword extraction only
             m_queryRunner->processKeywordsOnly();
         });
@@ -1601,203 +1640,6 @@ private:  // Methods
         m_spinnerTimer->stop();
     }
 
-/* OLD METHODS - Replaced by QueryRunner
-    bool extractPDFText(const QString &pdfPath) {
-        logMessage("Starting PDF extraction...");
-
-        if (m_pdfDocument->load(pdfPath) != QPdfDocument::Error::None) {
-            logMessage("Failed to load PDF");
-            return false;
-        }
-
-        int startPage = 0;
-        int endPage = m_pdfDocument->pageCount() - 1;
-        int pageCount = m_pdfDocument->pageCount();
-
-        if (endPage >= pageCount) {
-            endPage = pageCount - 1;
-        }
-
-        QString extractedText;
-
-        for (int i = startPage; i <= endPage; ++i) {
-            QString pageText = m_pdfDocument->getAllText(i).text();
-
-            // Always strip copyright notices for LLM
-            pageText = removeCopyrightNotices(pageText);
-
-            pageText = sanitizeText(pageText);
-            extractedText += pageText + "\n\n";
-
-            logMessage(QString("Extracted page %1/%2").arg(i + 1).arg(pageCount));
-        }
-
-        m_extractedText = extractedText.trimmed();
-        m_extractedTextEdit->setPlainText(m_extractedText);
-        m_resultsTabWidget->setCurrentIndex(0);
-        m_mainTabWidget->setCurrentIndex(1);  // Switch to Output tab
-
-        logMessage(QString("Extraction complete: %1 characters").arg(m_extractedText.length()));
-        return true;
-    }
-
-    void processWithAI() {
-        if (m_extractedText.isEmpty()) {
-            logMessage("No text to process");
-            return;
-        }
-
-        // Get settings from database
-        QSqlQuery query("SELECT * FROM settings LIMIT 1");
-        if (!query.exec() || !query.next()) {
-            logMessage("Failed to load settings from database");
-            return;
-        }
-
-        QString url = query.value("url").toString();
-        QString modelName = query.value("model_name").toString();
-
-        // Generate summary with per-prompt settings
-        double summaryTemp = query.value("summary_temperature").toString().toDouble();
-        int summaryContext = query.value("summary_context_length").toString().toInt();
-        int summaryTimeout = query.value("summary_timeout").toString().toInt();
-        QString summaryPreprompt = query.value("summary_preprompt").toString();
-        QString summaryPrompt = query.value("summary_prompt").toString();
-        summaryPrompt.replace("{text}", m_extractedText);
-
-        QString fullSummaryPrompt = summaryPreprompt + "\n\n" + summaryPrompt;
-        QString summary = callLMStudio(url, modelName, fullSummaryPrompt, summaryTemp, summaryContext, summaryTimeout);
-
-        if (!summary.isEmpty()) {
-            m_summaryTextEdit->setPlainText(summary);
-            logMessage("Summary generated");
-        }
-
-        // Generate keywords with per-prompt settings
-        double keywordTemp = query.value("keyword_temperature").toString().toDouble();
-        int keywordContext = query.value("keyword_context_length").toString().toInt();
-        int keywordTimeout = query.value("keyword_timeout").toString().toInt();
-        QString keywordPreprompt = query.value("keyword_preprompt").toString();
-        QString keywordPrompt = query.value("keyword_prompt").toString();
-        keywordPrompt.replace("{text}", m_extractedText);
-
-        QString fullKeywordPrompt = keywordPreprompt + "\n\n" + keywordPrompt;
-        QString keywords = callLMStudio(url, modelName, fullKeywordPrompt, keywordTemp, keywordContext, keywordTimeout);
-
-        if (!keywords.isEmpty()) {
-            m_keywordsTextEdit->setPlainText(keywords);
-            logMessage("Keywords extracted");
-        }
-    }
-
-    QString callLMStudio(const QString &url, const QString &model, const QString &prompt,
-                        double temperature, int maxTokens, int timeout) {
-        logMessage(QString("Calling LM Studio API at %1").arg(url));
-
-        QJsonObject message;
-        message["role"] = "user";
-        message["content"] = prompt;
-
-        QJsonArray messages;
-        messages.append(message);
-
-        QJsonObject requestData;
-        requestData["model"] = model;
-        requestData["messages"] = messages;
-        requestData["temperature"] = temperature;
-        requestData["max_tokens"] = maxTokens;
-
-        QJsonDocument doc(requestData);
-        QByteArray data = doc.toJson();
-
-        QNetworkRequest request;
-        request.setUrl(QUrl(url));
-        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-        QEventLoop loop;
-        QTimer timer;
-        timer.setSingleShot(true);
-        timer.start(timeout); // Use provided timeout
-
-        QNetworkReply *reply = m_networkManager->post(request, data);
-
-        connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-        connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-
-        loop.exec();
-
-        QString result;
-
-        if (reply->error() == QNetworkReply::NoError) {
-            QByteArray response = reply->readAll();
-            QJsonDocument responseDoc = QJsonDocument::fromJson(response);
-            QJsonObject responseObj = responseDoc.object();
-
-            if (responseObj.contains("choices")) {
-                QJsonArray choices = responseObj["choices"].toArray();
-                if (!choices.isEmpty()) {
-                    QJsonObject firstChoice = choices[0].toObject();
-                    QJsonObject message = firstChoice["message"].toObject();
-                    result = message["content"].toString();
-                }
-            }
-
-            logMessage("API call successful");
-        } else {
-            logMessage(QString("API call failed: %1").arg(reply->errorString()));
-        }
-
-        reply->deleteLater();
-        return result;
-    }
-
-    QString removeCopyrightNotices(const QString &text) {
-        QString cleaned = text;
-
-        QList<QRegularExpression> copyrightPatterns = {
-            QRegularExpression("\\(c\\)", QRegularExpression::CaseInsensitiveOption),
-            QRegularExpression("\\(C\\)", QRegularExpression::CaseInsensitiveOption),
-            QRegularExpression("©", QRegularExpression::CaseInsensitiveOption),
-            QRegularExpression("\\bcopyright\\b", QRegularExpression::CaseInsensitiveOption),
-            QRegularExpression("\\ball\\s+rights\\s+reserved\\b", QRegularExpression::CaseInsensitiveOption)
-        };
-
-        for (const auto &pattern : copyrightPatterns) {
-            cleaned.remove(pattern);
-        }
-        return cleaned;
-    }
-
-    QString sanitizeText(const QString &input) {
-        QString result = input;
-
-        // Remove null and control characters
-        result.remove(QChar::Null);
-        result.remove(QChar(0xFFFD));
-
-        // Replace Unicode spaces
-        result.replace(QRegularExpression("[\\x{00A0}\\x{1680}\\x{2000}-\\x{200B}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]+"), " ");
-
-        // Remove zero-width characters
-        result.remove(QRegularExpression("[\\x{200B}-\\x{200D}\\x{FEFF}]+"));
-
-        // Remove object replacement characters
-        result.remove(QChar(0xFFFC));
-
-        // Clean up whitespace
-        result.replace(QRegularExpression("[ \\t]+"), " ");
-        result.replace(QRegularExpression("\\n{3,}"), "\n\n");
-
-        // Trim lines
-        QStringList lines = result.split('\n');
-        for (int i = 0; i < lines.size(); ++i) {
-            lines[i] = lines[i].trimmed();
-        }
-        result = lines.join('\n');
-
-        return result.trimmed();
-    }
-*/
 
 private:
     // Member variables already declared above

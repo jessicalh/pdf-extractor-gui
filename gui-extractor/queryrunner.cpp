@@ -315,12 +315,20 @@ void QueryRunner::runKeywordExtraction() {
     emit stageChanged(m_currentStage);
     emit progressMessage("=== STAGE 2: Running Keyword Extraction ===");
 
+    // Log summary availability
+    if (!m_summary.isEmpty()) {
+        emit progressMessage(QString("Summary available for keyword extraction (%1 chars)").arg(m_summary.length()));
+    } else {
+        emit progressMessage("No summary available for keyword extraction");
+    }
+
     m_keywordsQuery->setConnectionSettings(m_settings.url, m_settings.modelName);
     m_keywordsQuery->setPromptSettings(m_settings.keywordTemp,
                                        m_settings.keywordContext,
                                        m_settings.keywordTimeout);
     m_keywordsQuery->setPreprompt(m_settings.keywordPreprompt);
     m_keywordsQuery->setPrompt(m_settings.keywordPrompt);
+    m_keywordsQuery->setSummaryResult(m_summary);  // Pass the summary result
 
     m_keywordsQuery->execute(m_cleanedText);
 }
@@ -354,12 +362,20 @@ void QueryRunner::runRefinedKeywordExtraction() {
 
     emit progressMessage(QString("Using refined prompt (first 200 chars): %1").arg(m_suggestedPrompt.left(200)));
 
+    // Log summary availability
+    if (!m_summary.isEmpty()) {
+        emit progressMessage(QString("Summary available for refined keyword extraction (%1 chars)").arg(m_summary.length()));
+    } else {
+        emit progressMessage("No summary available for refined keyword extraction");
+    }
+
     m_refinedKeywordsQuery->setConnectionSettings(m_settings.url, m_settings.modelName);
     m_refinedKeywordsQuery->setPromptSettings(m_settings.keywordTemp,
                                               m_settings.keywordContext,
                                               m_settings.keywordTimeout);
     m_refinedKeywordsQuery->setPreprompt(m_settings.keywordPreprompt);
     m_refinedKeywordsQuery->setRefinedPrompt(m_suggestedPrompt);
+    m_refinedKeywordsQuery->setSummaryResult(m_summary);  // Pass the summary result
 
     emit progressMessage("About to execute refined keywords query...");
     m_refinedKeywordsQuery->execute(m_cleanedText);
@@ -392,9 +408,11 @@ void QueryRunner::handleKeywordsResult(const QString& result) {
     if (m_singleStepMode) {
         // Single-step keyword extraction - don't advance
         m_singleStepMode = false;  // Reset flag
-        m_currentStage = Idle;
+        m_currentStage = Complete;
         emit stageChanged(m_currentStage);
+        emit processingComplete();  // This triggers UI re-enable
         emit progressMessage("Keyword re-extraction complete");
+        m_currentStage = Idle;
     } else {
         // Part of full pipeline - continue normally
         advanceToNextStage();
@@ -437,7 +455,17 @@ void QueryRunner::advanceToNextStage() {
             break;
 
         case ExtractingKeywords:
-            runPromptRefinement();
+            if (m_settings.skipRefinement) {
+                // Skip refinement stages and complete the process
+                emit progressMessage("Skipping keyword refinement as per settings");
+                m_currentStage = Complete;
+                emit stageChanged(m_currentStage);
+                emit processingComplete();
+                emit progressMessage("All processing complete");
+                m_currentStage = Idle;
+            } else {
+                runPromptRefinement();
+            }
             break;
 
         case RefiningPrompt:
@@ -495,6 +523,9 @@ void QueryRunner::loadSettingsFromDatabase() {
     m_settings.refinementTemp = query.value("refinement_temperature").toString().toDouble();
     m_settings.refinementContext = query.value("refinement_context_length").toString().toInt();
     m_settings.refinementTimeout = query.value("refinement_timeout").toString().toInt();
+    // Load skip_refinement setting, default to false if not present
+    QString skipRefinement = query.value("skip_refinement").toString();
+    m_settings.skipRefinement = (skipRefinement == "true");
     m_settings.keywordRefinementPreprompt = query.value("keyword_refinement_preprompt").toString();
     m_settings.prepromptRefinementPrompt = query.value("preprompt_refinement_prompt").toString();
 

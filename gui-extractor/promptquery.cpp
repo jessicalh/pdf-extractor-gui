@@ -73,30 +73,8 @@ void PromptQuery::abort() {
         abortLog.close();
     }
 
-    if (m_currentReply) {
-        qDebug() << "  - Reply exists, isRunning:" << m_currentReply->isRunning();
-
-        // CRITICAL: Disconnect all signals before aborting to prevent callbacks
-        m_currentReply->disconnect();
-        qDebug() << "  - Disconnected signals from network reply";
-
-        if (m_currentReply->isRunning()) {
-            qDebug() << "  - Aborting network reply...";
-            m_currentReply->abort();
-            qDebug() << "  - Network reply aborted";
-        }
-
-        m_currentReply->deleteLater();
-        m_currentReply = nullptr;
-        qDebug() << "  - Network reply cleaned up";
-    } else {
-        qDebug() << "  - No active network reply";
-    }
-
-    if (m_timeoutTimer->isActive()) {
-        qDebug() << "  - Stopping timeout timer";
-        m_timeoutTimer->stop();
-    }
+    // Force close the connection to stop LM Studio from continuing
+    cleanupNetworkReply(true);
 
     qDebug() << "PromptQuery::abort() complete for" << queryType;
     if (abortLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
@@ -152,6 +130,24 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
 
     emit progressUpdate("Sending request to LM Studio...");
 
+    // Log if the final prompt contains summary data
+    if (fullPrompt.contains("Summary:") || fullPrompt.contains("summary:")) {
+        emit progressUpdate("✓ Final prompt DOES contain summary section");
+
+        // Find and show the summary portion
+        int summaryPos = fullPrompt.indexOf("Summary:", Qt::CaseInsensitive);
+        if (summaryPos >= 0) {
+            int endPos = fullPrompt.indexOf("\n\n", summaryPos);
+            if (endPos < 0) endPos = fullPrompt.indexOf("Text:", summaryPos);
+            if (endPos < 0) endPos = summaryPos + 500;
+
+            QString summarySection = fullPrompt.mid(summaryPos, endPos - summaryPos);
+            emit progressUpdate(QString("Summary section in prompt: %1").arg(summarySection.left(300)));
+        }
+    } else {
+        emit progressUpdate("✗ Final prompt does NOT contain 'Summary:' keyword");
+    }
+
     m_currentReply = m_networkManager->post(request, requestData);
 
     connect(m_currentReply, &QNetworkReply::finished,
@@ -181,8 +177,7 @@ void PromptQuery::handleNetworkReply() {
         }
 
         emit errorOccurred("Network error: " + errorString);
-        m_currentReply->deleteLater();
-        m_currentReply = nullptr;
+        cleanupNetworkReply(false);
         return;
     }
 
@@ -301,22 +296,23 @@ void PromptQuery::handleNetworkReply() {
 }
 
 void PromptQuery::handleTimeout() {
-    if (m_currentReply) {
-        m_currentReply->abort();
-        emit errorOccurred("Request timeout after " + QString::number(m_timeout/1000) + " seconds");
-    }
+    emit errorOccurred("Request timeout after " + QString::number(m_timeout/1000) + " seconds");
+    // Use centralized cleanup but don't force close for timeouts
+    cleanupNetworkReply(false);
 }
 
 QString PromptQuery::removeHarmonyArtifacts(const QString& text) {
     QString cleaned = text;
 
     // Check if text starts with <|start|> and has <|message|> within first 60 chars
-    if (cleaned.startsWith("<|start|>")) {
-        int messagePos = cleaned.indexOf("<|message|>", 0);
+    const QString startTag = "<|start|>";
+    const QString messageTag = "<|message|>";
+    if (cleaned.startsWith(startTag)) {
+        qsizetype messagePos = cleaned.indexOf(messageTag, 0);
         if (messagePos != -1 && messagePos <= 60) {
             // Found Harmony header within 60 chars, remove it
-            QString removedSequence = cleaned.left(messagePos + 11); // +11 for "<|message|>"
-            cleaned = cleaned.mid(messagePos + 11);
+            QString removedSequence = cleaned.left(messagePos + messageTag.length());
+            cleaned = cleaned.mid(messagePos + messageTag.length());
 
             // Log what we removed
             emit progressUpdate(QString("Removed Harmony artifact: %1").arg(removedSequence));
@@ -333,23 +329,25 @@ QString PromptQuery::removeHarmonyArtifacts(const QString& text) {
     }
 
     // Check for orphaned end tags at the very end
-    if (cleaned.endsWith("<|end|>")) {
-        cleaned.chop(7); // Remove "<|end|>"
+    const QString endTag = "<|end|>";
+    const QString returnTag = "<|return|>";
+    if (cleaned.endsWith(endTag)) {
+        cleaned.chop(endTag.length());
         emit progressUpdate("Removed orphaned <|end|> tag at end of response");
-    } else if (cleaned.endsWith("<|return|>")) {
-        cleaned.chop(10); // Remove "<|return|>"
+    } else if (cleaned.endsWith(returnTag)) {
+        cleaned.chop(returnTag.length());
         emit progressUpdate("Removed orphaned <|return|> tag at end of response");
     }
 
     // Also check for other common incomplete patterns at the end
     // Pattern: <|start|> with no closing (at the very end)
-    int lastStart = cleaned.lastIndexOf("<|start|>");
+    qsizetype lastStart = cleaned.lastIndexOf(startTag);
     if (lastStart != -1 && lastStart > cleaned.length() - 100) {
         // Found <|start|> near the end, check if it's incomplete
         QString tail = cleaned.mid(lastStart);
-        if (!tail.contains("<|message|>") && !tail.contains("<|end|>")) {
+        if (!tail.contains(messageTag) && !tail.contains(endTag)) {
             // Incomplete sequence at the end
-            QString removedSequence = tail;
+            const QString& removedSequence = tail;
             cleaned = cleaned.left(lastStart);
             emit progressUpdate(QString("Removed incomplete Harmony sequence at end: %1").arg(removedSequence));
 
@@ -372,20 +370,22 @@ QString PromptQuery::extractThinkTags(const QString& text, QString& reasoning) {
     reasoning.clear();
 
     // Look for <think> ... </think> tags
-    int startPos = cleaned.indexOf("<think>");
+    const QString thinkStartTag = "<think>";
+    const QString thinkEndTag = "</think>";
+    qsizetype startPos = cleaned.indexOf(thinkStartTag);
     if (startPos != -1) {
-        int endPos = cleaned.indexOf("</think>", startPos);
+        qsizetype endPos = cleaned.indexOf(thinkEndTag, startPos);
         if (endPos != -1) {
             // Extract the reasoning content
-            int contentStart = startPos + 7; // Length of "<think>"
-            int contentLength = endPos - contentStart;
+            qsizetype contentStart = startPos + thinkStartTag.length();
+            qsizetype contentLength = endPos - contentStart;
             reasoning = cleaned.mid(contentStart, contentLength).trimmed();
 
             // Calculate how much to remove, checking for newline after </think>
-            int removeLength = endPos + 8 - startPos; // +8 for "</think>"
+            qsizetype removeLength = endPos + thinkEndTag.length() - startPos;
 
             // Check if there's a newline immediately after </think>
-            int checkPos = endPos + 8;
+            qsizetype checkPos = endPos + thinkEndTag.length();
             if (checkPos < cleaned.length()) {
                 if (cleaned[checkPos] == '\n') {
                     removeLength++; // Also remove the newline
@@ -464,6 +464,10 @@ QString SummaryQuery::getQueryType() const {
 
 KeywordsQuery::KeywordsQuery(QObject *parent) : PromptQuery(parent) {}
 
+void KeywordsQuery::setSummaryResult(const QString& summary) {
+    m_summaryResult = summary;
+}
+
 QString KeywordsQuery::buildFullPrompt(const QString& text) {
     if (text.isEmpty()) {
         return QString();
@@ -475,7 +479,21 @@ QString KeywordsQuery::buildFullPrompt(const QString& text) {
     }
 
     QString processedPrompt = m_prompt;
+
+    // Debug logging BEFORE replacement
+    bool hasSummaryPlaceholder = m_prompt.contains("{summary_result}");
+    if (hasSummaryPlaceholder) {
+        qDebug() << "Keywords prompt contains {summary_result} placeholder";
+        qDebug() << "Summary content length:" << m_summaryResult.length();
+        if (!m_summaryResult.isEmpty()) {
+            qDebug() << "Summary first 100 chars:" << m_summaryResult.left(100);
+        } else {
+            qDebug() << "WARNING: Summary is EMPTY!";
+        }
+    }
+
     processedPrompt.replace("{text}", text);
+    processedPrompt.replace("{summary_result}", m_summaryResult);
     fullPrompt += processedPrompt;
 
     return fullPrompt;
@@ -579,4 +597,41 @@ void KeywordsWithRefinementQuery::setRefinedPrompt(const QString& refinedPrompt)
 
 QString KeywordsWithRefinementQuery::getQueryType() const {
     return "Keywords (Refined)";
+}
+
+// Centralized network reply cleanup with optional forced socket closure
+void PromptQuery::cleanupNetworkReply(bool forceClose) {
+    if (m_currentReply) {
+        qDebug() << "cleanupNetworkReply() - forceClose:" << forceClose;
+
+        // CRITICAL: Disconnect all signals first to prevent any callbacks
+        m_currentReply->disconnect();
+        qDebug() << "  - Disconnected all signals";
+
+        if (m_currentReply->isRunning()) {
+            if (forceClose && m_networkManager) {
+                // Force close the underlying socket to stop server processing
+                // This is more aggressive than abort() and tells the server we're done
+                // Clear all connections to force socket closure
+                m_networkManager->clearConnectionCache();
+                m_networkManager->clearAccessCache();
+                qDebug() << "  - Cleared connection cache to force socket closure";
+            }
+
+            // Now abort the request
+            m_currentReply->abort();
+            qDebug() << "  - Aborted network reply";
+        }
+
+        // Schedule for deletion
+        m_currentReply->deleteLater();
+        m_currentReply = nullptr;
+        qDebug() << "  - Network reply scheduled for deletion";
+    }
+
+    // Always stop the timer
+    if (m_timeoutTimer && m_timeoutTimer->isActive()) {
+        m_timeoutTimer->stop();
+        qDebug() << "  - Stopped timeout timer";
+    }
 }

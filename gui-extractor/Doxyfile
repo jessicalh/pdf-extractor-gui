@@ -1,0 +1,68 @@
+# Doxyfile for PDF Extractor GUI
+
+# Project settings
+PROJECT_NAME           = "PDF Extractor GUI"
+PROJECT_NUMBER         = "3.0.0"
+PROJECT_BRIEF          = "Qt-based PDF text extraction with AI processing"
+OUTPUT_DIRECTORY       = docs
+CREATE_SUBDIRS         = YES
+
+# Input settings
+INPUT                  = .
+FILE_PATTERNS          = *.cpp *.h *.md
+RECURSIVE              = YES
+EXCLUDE                = build debug release main_old.cpp main_original.cpp main_redesigned.cpp
+
+# Build options
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+# Qt-specific settings
+ALIASES               += "signal=@par Signal:"
+ALIASES               += "slot=@par Slot:"
+ALIASES               += "property=@par Property:"
+ALIASES               += "qmlsignal=@par QML Signal:"
+
+# Output options
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES  # For Sphinx/Breathe integration
+
+# Graph generation
+HAVE_DOT               = NO
+CLASS_DIAGRAMS         = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+CALL_GRAPH             = NO  # Set to YES if you have Graphviz
+
+# Source browsing
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+# Preprocessing
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+PREDEFINED             = Q_OBJECT= \
+                        Q_PROPERTY(x)= \
+                        Q_SIGNALS= \
+                        Q_SLOTS= \
+                        signals=public \
+                        public_slots=public \
+                        protected_slots=protected \
+                        private_slots=private
+
+# Warnings
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_FORMAT            = "$file:$line: $text"

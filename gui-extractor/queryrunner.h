@@ -151,6 +151,7 @@ private:
         double refinementTemp;
         int refinementContext;
         int refinementTimeout;
+        bool skipRefinement;
         QString keywordRefinementPreprompt;
         QString prepromptRefinementPrompt;
     } m_settings;
