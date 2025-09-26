@@ -13,11 +13,13 @@ TARGET = pdfextractor_gui
 SOURCES += main.cpp \
     promptquery.cpp \
     queryrunner.cpp \
-    modellistfetcher.cpp
+    modellistfetcher.cpp \
+    inputmethod.cpp
 
 HEADERS += promptquery.h \
     queryrunner.h \
-    modellistfetcher.h
+    modellistfetcher.h \
+    inputmethod.h
 
 # Windows specific settings
 win32 {
