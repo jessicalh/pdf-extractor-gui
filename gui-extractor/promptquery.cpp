@@ -5,6 +5,8 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
+#include <QCoreApplication>
+#include <QDir>
 
 // ===== BASE CLASS IMPLEMENTATION =====
 
@@ -86,12 +88,21 @@ void PromptQuery::abort() {
 }
 
 void PromptQuery::sendRequest(const QString& fullPrompt) {
-    QJsonObject messageObj;
-    messageObj["role"] = "user";
-    messageObj["content"] = fullPrompt;
-
     QJsonArray messages;
-    messages.append(messageObj);
+
+    // If we have a preprompt, send it as a system message
+    if (!m_preprompt.isEmpty()) {
+        QJsonObject systemMsg;
+        systemMsg["role"] = "system";
+        systemMsg["content"] = m_preprompt;
+        messages.append(systemMsg);
+    }
+
+    // Send the main prompt as a user message
+    QJsonObject userMsg;
+    userMsg["role"] = "user";
+    userMsg["content"] = fullPrompt;  // Note: This is now just the processed prompt, not preprompt+prompt
+    messages.append(userMsg);
 
     QJsonObject requestBody;
     requestBody["model"] = m_modelName;
@@ -122,13 +133,37 @@ void PromptQuery::sendRequest(const QString& fullPrompt) {
         stream << "Model: " << m_modelName << "\n";
         stream << "Temperature: " << m_temperature << "\n";
         stream << "Max Tokens: " << m_contextLength << "\n";
-        stream << "--- Full Prompt ---\n";
+        if (!m_preprompt.isEmpty()) {
+            stream << "--- System Message (Preprompt) ---\n";
+            stream << m_preprompt << "\n";
+            stream << "--- End System Message ---\n";
+        }
+        stream << "--- User Message (Prompt) ---\n";
         stream << fullPrompt << "\n";
-        stream << "--- End Prompt ---\n";
+        stream << "--- End User Message ---\n";
         logFile.close();
     }
 
     emit progressUpdate("Sending request to LM Studio...");
+
+    // Write complete request to transcript.log
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString transcriptPath = QDir(appDir).absoluteFilePath("transcript.log");
+    QFile transcriptFile(transcriptPath);
+
+    // Open in append mode (will be truncated at start of new analysis)
+    if (transcriptFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&transcriptFile);
+        stream << "\n" << QString("=").repeated(80) << "\n";
+        stream << "REQUEST: " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << "\n";
+        stream << "Type: " << getQueryType() << "\n";
+        stream << "URL: " << m_url << "\n";
+        stream << "Headers: Content-Type: application/json\n";
+        stream << "\n--- REQUEST BODY (RAW JSON) ---\n";
+        stream << requestData << "\n";  // This is the actual JSON being sent
+        stream << "--- END REQUEST BODY ---\n";
+        transcriptFile.close();
+    }
 
     // Log if the final prompt contains summary data
     if (fullPrompt.contains("Summary:") || fullPrompt.contains("summary:")) {
@@ -184,6 +219,22 @@ void PromptQuery::handleNetworkReply() {
     QByteArray response = m_currentReply->readAll();
     m_currentReply->deleteLater();
     m_currentReply = nullptr;
+
+    // Write complete response to transcript.log
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString transcriptPath = QDir(appDir).absoluteFilePath("transcript.log");
+    QFile transcriptFile(transcriptPath);
+
+    if (transcriptFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        QTextStream stream(&transcriptFile);
+        stream << "\nRESPONSE: " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << "\n";
+        stream << "Type: " << getQueryType() << "\n";
+        stream << "\n--- RESPONSE BODY (RAW JSON) ---\n";
+        stream << response << "\n";  // This is the actual JSON received
+        stream << "--- END RESPONSE BODY ---\n";
+        stream << QString("=").repeated(80) << "\n";
+        transcriptFile.close();
+    }
 
     QJsonDocument doc = QJsonDocument::fromJson(response);
     if (doc.isNull()) {
@@ -430,16 +481,11 @@ QString SummaryQuery::buildFullPrompt(const QString& text) {
         return QString();
     }
 
-    QString fullPrompt = m_preprompt;
-    if (!fullPrompt.isEmpty()) {
-        fullPrompt += "\n\n";
-    }
-
+    // Now we only return the processed prompt, preprompt is handled separately
     QString processedPrompt = m_prompt;
     processedPrompt.replace("{text}", text);
-    fullPrompt += processedPrompt;
 
-    return fullPrompt;
+    return processedPrompt;
 }
 
 void SummaryQuery::processResponse(const QString& response) {
@@ -473,11 +519,7 @@ QString KeywordsQuery::buildFullPrompt(const QString& text) {
         return QString();
     }
 
-    QString fullPrompt = m_preprompt;
-    if (!fullPrompt.isEmpty()) {
-        fullPrompt += "\n\n";
-    }
-
+    // Now we only return the processed prompt, preprompt is handled separately
     QString processedPrompt = m_prompt;
 
     // Debug logging BEFORE replacement
@@ -494,9 +536,8 @@ QString KeywordsQuery::buildFullPrompt(const QString& text) {
 
     processedPrompt.replace("{text}", text);
     processedPrompt.replace("{summary_result}", m_summaryResult);
-    fullPrompt += processedPrompt;
 
-    return fullPrompt;
+    return processedPrompt;
 }
 
 void KeywordsQuery::processResponse(const QString& response) {
@@ -545,18 +586,13 @@ QString RefineKeywordsQuery::buildFullPrompt(const QString& text) {
         return QString();
     }
 
-    QString fullPrompt = m_preprompt;
-    if (!fullPrompt.isEmpty()) {
-        fullPrompt += "\n\n";
-    }
-
+    // Now we only return the processed prompt, preprompt is handled separately
     QString processedPrompt = m_prompt;
     processedPrompt.replace("{text}", text);
     processedPrompt.replace("{keywords}", m_originalKeywords);
     processedPrompt.replace("{original_prompt}", m_originalPrompt);
-    fullPrompt += processedPrompt;
 
-    return fullPrompt;
+    return processedPrompt;
 }
 
 void RefineKeywordsQuery::processResponse(const QString& response) {

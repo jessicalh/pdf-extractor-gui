@@ -6,6 +6,8 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
+#include <QCoreApplication>
+#include <QDir>
 
 QueryRunner::QueryRunner(QObject *parent)
     : QObject(parent)
@@ -275,6 +277,19 @@ void QueryRunner::startPipeline(const QString& text, InputType type) {
         stream << "Input Type: " << (type == PDFFile ? "PDF File" : "Pasted Text") << Qt::endl;
         stream << Qt::endl;
         logFile.close();
+    }
+
+    // Clear the transcript.log file at the start of each run
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString transcriptPath = QDir(appDir).absoluteFilePath("transcript.log");
+    QFile transcriptFile(transcriptPath);
+    if (transcriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QTextStream stream(&transcriptFile);
+        stream << "=== NETWORK TRANSCRIPT LOG ===" << Qt::endl;
+        stream << "Started: " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << Qt::endl;
+        stream << "This log contains complete request/response JSON for all API calls" << Qt::endl;
+        stream << "Input Type: " << (type == PDFFile ? "PDF File" : "Pasted Text") << Qt::endl;
+        transcriptFile.close();
     }
 
     // Clean up the text
